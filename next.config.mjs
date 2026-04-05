@@ -45,14 +45,12 @@ const hasFirebaseClientEnv =
   hasValue(publicEnv.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID) &&
   hasValue(publicEnv.NEXT_PUBLIC_FIREBASE_APP_ID);
 
-const hasFirebaseAdminEnv =
-  hasValue(process.env.FIREBASE_CLIENT_EMAIL) &&
-  hasValue(process.env.FIREBASE_PRIVATE_KEY) &&
-  hasValue(process.env.FIREBASE_PROJECT_ID);
-
 const resolvedPublicEnv = {
   ...publicEnv,
-  NEXT_PUBLIC_REVIEW_SAFE_MODE: String(!(hasFirebaseClientEnv && hasFirebaseAdminEnv))
+  NEXT_PUBLIC_REVIEW_SAFE_MODE:
+    process.env.NEXT_PUBLIC_REVIEW_SAFE_MODE ??
+    process.env.VITE_REVIEW_SAFE_MODE ??
+    String(!hasFirebaseClientEnv)
 };
 
 /** @type {import('next').NextConfig} */
