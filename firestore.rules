@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSupervisor() {
+      return hasRole('supervisor');
+    }
+
+    function isEnumerator() {
+      return hasRole('enumerator');
+    }
+
+    function sharesDistrict(district) {
+      return isAdmin() || (isSupervisor() && district in request.auth.token.districts);
+    }
+
+    function ownsSubmission() {
+      return isEnumerator() && resource.data.enumeratorId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isAdmin()
+        || (
+          isSelf(userId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.role == 'enumerator'
+          && request.resource.data.status in ['active', 'invited']
+          && request.resource.data.projectId == null
+        );
+      allow update: if isAdmin()
+        || (
+          isSelf(userId)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.projectId == resource.data.projectId
+          && request.resource.data.scopes == resource.data.scopes
+          && request.resource.data.assignedTemplateVersion == resource.data.assignedTemplateVersion
+        );
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAdmin()
+        || (isEnumerator() && (resource.data.enumeratorId == request.auth.uid || resource.data.assigneeUid == request.auth.uid))
+        || (isSupervisor() && resource.data.supervisorId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /template_versions/{templateId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if isAdmin()
+        || ownsSubmission()
+        || sharesDistrict(resource.data.scope.district);
+      allow create: if isAdmin()
+        || (isEnumerator() && request.resource.data.enumeratorId == request.auth.uid);
+      allow update: if isAdmin()
+        || (isEnumerator() && resource.data.enumeratorId == request.auth.uid)
+        || sharesDistrict(resource.data.scope.district);
+      allow delete: if isAdmin();
+    }
+
+    match /mission_submissions/{submissionId} {
+      allow read: if isAdmin()
+        || (isEnumerator() && resource.data.enumeratorId == request.auth.uid)
+        || sharesDistrict(resource.data.scope.district);
+      allow create: if isAdmin()
+        || (isEnumerator() && request.resource.data.enumeratorId == request.auth.uid);
+      allow update: if isAdmin()
+        || (isEnumerator() && resource.data.enumeratorId == request.auth.uid)
+        || sharesDistrict(resource.data.scope.district);
+      allow delete: if isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isAdmin() || isSupervisor();
+      allow create: if isSignedIn() && request.resource.data.actorId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /exports/{exportId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.requesterId == request.auth.uid)
+        || isSupervisor();
+      allow create: if isAdmin() || isSupervisor();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

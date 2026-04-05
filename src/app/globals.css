@@ -1,0 +1,76 @@
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 275 100% 98%;
+    --foreground: 240 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+    --primary: 246 49% 18%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 276 100% 96%;
+    --secondary-foreground: 240 10% 10%;
+    --muted: 36 100% 96%;
+    --muted-foreground: 240 4% 42%;
+    --accent: 30 100% 92%;
+    --accent-foreground: 240 10% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 260 32% 88%;
+    --input: 260 32% 92%;
+    --ring: 268 79% 68%;
+    --chart-1: 262 74% 63%;
+    --chart-2: 18 95% 70%;
+    --chart-3: 47 100% 72%;
+    --chart-4: 146 44% 63%;
+    --chart-5: 206 76% 62%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    background-image:
+      radial-gradient(circle at 12% 10%, rgba(214, 189, 255, 0.44), transparent 24%),
+      radial-gradient(circle at 88% 12%, rgba(255, 222, 162, 0.38), transparent 18%),
+      linear-gradient(180deg, rgba(252, 246, 255, 0.98), rgba(253, 250, 255, 1));
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: rgba(179, 137, 255, 0.28);
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(16px);
+  }
+
+  .soft-ring {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.72),
+      0 12px 42px rgba(111, 86, 154, 0.12);
+  }
+
+  .section-shell {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .surface {
+    @apply rounded-3xl border border-white/70 bg-white/90 shadow-soft;
+  }
+}

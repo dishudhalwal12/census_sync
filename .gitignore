@@ -1,0 +1,14 @@
+.next
+node_modules
+functions/node_modules
+.env
+.env.local
+.env.production
+.env.development.local
+coverage
+dist
+.runtime
+*.tsbuildinfo
+*.log
+.DS_Store
+functions/lib
