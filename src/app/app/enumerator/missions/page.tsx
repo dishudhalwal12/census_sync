@@ -4,7 +4,7 @@ import { getMissionPackages } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function AssignedMissionsPage() {
-  const session = await requireSession(["enumerator"]);
+  const session = await requireSession(["employee", "admin"]);
   const missionPackages = await getMissionPackages(session);
 
   return (

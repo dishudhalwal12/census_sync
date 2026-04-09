@@ -3,9 +3,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/server/session";
-import type { UserRole } from "@/types/domain";
+import type { WorkspaceRole } from "@/types/domain";
 
-export async function requireRouteSession(allowedRoles?: UserRole[]) {
+export async function requireRouteSession(allowedRoles?: WorkspaceRole[]) {
   const session = await getSession();
 
   if (!session) {

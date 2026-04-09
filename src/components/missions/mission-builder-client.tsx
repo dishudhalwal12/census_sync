@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Crosshair, Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,45 +17,6 @@ import type {
   UserProfile
 } from "@/types/domain";
 
-function createField(type: TemplateField["kind"] = "text"): TemplateField {
-  return {
-    key: `field_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    label: "New question",
-    type:
-      type === "number"
-        ? "number"
-        : type === "date"
-          ? "date"
-          : type === "boolean"
-            ? "checkbox"
-            : type === "single_select" || type === "multi_select"
-              ? "select"
-              : type === "textarea" || type === "instruction"
-                ? "textarea"
-                : "text",
-    kind: type,
-    required: type !== "instruction",
-    helperText: "",
-    placeholder: "",
-    options:
-      type === "single_select" || type === "multi_select"
-        ? [
-            { label: "Option 1", value: "option_1" },
-            { label: "Option 2", value: "option_2" }
-          ]
-        : undefined
-  };
-}
-
-function createSection(title = "New section"): TemplateSection {
-  return {
-    id: `section_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    title,
-    description: "",
-    fields: [createField("text")]
-  };
-}
-
 export function MissionBuilderClient({
   users,
   missionPackages
@@ -64,10 +25,56 @@ export function MissionBuilderClient({
   missionPackages: MissionAssignmentPackage[];
 }) {
   const router = useRouter();
+  const localIdRef = useRef(0);
   const enumerators = useMemo(
-    () => users.filter((user) => user.role === "enumerator" && user.status === "active"),
+    () => users.filter((user) => user.role === "employee" && user.status === "active"),
     [users]
   );
+
+  function nextLocalId(prefix: string) {
+    localIdRef.current += 1;
+    return `${prefix}_${localIdRef.current}`;
+  }
+
+  function createField(type: TemplateField["kind"] = "text"): TemplateField {
+    return {
+      key: nextLocalId("field"),
+      label: "New question",
+      type:
+        type === "number"
+          ? "number"
+          : type === "date"
+            ? "date"
+            : type === "boolean"
+              ? "checkbox"
+              : type === "single_select" || type === "multi_select"
+                ? "select"
+                : type === "textarea" || type === "instruction"
+                  ? "textarea"
+                  : "text",
+      kind: type,
+      required: type !== "instruction",
+      helperText: "",
+      placeholder: "",
+      options:
+        type === "single_select" || type === "multi_select"
+          ? [
+              { label: "Option 1", value: "option_1" },
+              { label: "Option 2", value: "option_2" }
+            ]
+          : undefined
+    };
+  }
+
+  function createSection(title = "New section") {
+    return {
+      id: nextLocalId("section"),
+      title,
+      description: "",
+      fields: [createField("text")]
+    } satisfies TemplateSection;
+  }
+
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [objective, setObjective] = useState("");
@@ -96,7 +103,22 @@ export function MissionBuilderClient({
         }
       ]
     },
-    createSection("Census questions")
+    {
+      id: "section_census_questions",
+      title: "Census questions",
+      description: "",
+      fields: [
+        {
+          key: "field_census_question",
+          label: "New question",
+          type: "text",
+          kind: "text",
+          required: true,
+          helperText: "",
+          placeholder: ""
+        }
+      ]
+    }
   ]);
   const [latestSharePath, setLatestSharePath] = useState<string>();
   const reviewMission =

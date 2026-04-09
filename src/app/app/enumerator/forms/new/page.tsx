@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/server/session";
 import { createEmptyHouseholdForm } from "@/lib/validators/household";
 
 export default async function NewHouseholdPage() {
-  const session = await requireSession(["enumerator"]);
+  const session = await requireSession(["employee", "admin"]);
   const [submissions, dashboardData, currentTemplate] = await Promise.all([
     getSubmissions(session),
     getEnumeratorDashboardData(session),

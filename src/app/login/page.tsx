@@ -30,11 +30,10 @@ export default async function LoginPage({
           <div>
             <Badge className="bg-white/10 text-white">Offline-first GovTech</Badge>
             <h1 className="mt-6 font-display text-5xl font-semibold leading-tight">
-              Secure field survey operations for enumerators, supervisors, and admins.
+              Secure census campaigns for admins, employees, and public participants.
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-7 text-white/72">
-              Role-aware routing, resilient local capture, audit visibility, and export-ready
-              reporting in one premium field operations platform.
+              Org-scoped access, resilient offline capture, AI-assisted question design, and live analytics in one census operations platform.
             </p>
           </div>
           <div className="mt-12 grid gap-4 sm:grid-cols-2">

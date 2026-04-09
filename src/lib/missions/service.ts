@@ -22,6 +22,25 @@ import type {
 } from "@/types/domain";
 import type { AuthSession } from "@/types/session";
 
+const DEVICE_ID_KEY = "device-id";
+
+async function getOrCreateDeviceId() {
+  const existing = await censusSyncDb.deviceMeta.get(DEVICE_ID_KEY);
+  if (existing?.value) {
+    return existing.value;
+  }
+
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `device-${Date.now()}`;
+  await censusSyncDb.deviceMeta.put({
+    key: DEVICE_ID_KEY,
+    value: generated
+  });
+  return generated;
+}
+
 export async function cacheMissionPackage(
   pkg: MissionAssignmentPackage,
   ownerUid: string
@@ -183,6 +202,7 @@ export async function queueMissionSubmission(
   const now = new Date().toISOString();
   const fingerprint = await fingerprintBlob(params.evidenceBlob);
   const progress = getMissionRequiredCounts(params.assignmentPackage.template, params.answers);
+  const sourceDeviceId = await getOrCreateDeviceId();
 
   const payload: MissionSubmission = {
     submissionId,
@@ -211,6 +231,12 @@ export async function queueMissionSubmission(
     status: "completed",
     anomalyFlags: [],
     dedupeKey: createMissionDedupeKey(params.assignmentPackage.assignment.id, session.uid),
+    visitOutcome: "survey_completed",
+    language: "en",
+    sourceDeviceId,
+    revisionGroupId: params.assignmentPackage.assignment.id,
+    revisionNumber: 1,
+    startedAt: params.geoCheckAtStart.capturedAt,
     capturedAt: now,
     updatedAt: now,
     audit: {

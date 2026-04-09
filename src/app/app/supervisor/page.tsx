@@ -1,13 +1,15 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { AnalyticsPanels } from "@/components/charts/analytics-panels";
+import { TrustOpsPanels } from "@/components/charts/trust-ops-panels";
 import { KpiGrid } from "@/components/shared/kpi-grid";
+import { AlertCenter } from "@/components/shared/alert-center";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getSupervisorDashboardData } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function SupervisorDashboardPage() {
-  const session = await requireSession(["supervisor", "admin"]);
+  const session = await requireSession(["admin"]);
   const data = await getSupervisorDashboardData(session);
 
   return (
@@ -20,6 +22,12 @@ export default async function SupervisorDashboardPage() {
       />
       <KpiGrid items={data.kpis} />
       <AnalyticsPanels submissions={data.submissions} />
+      <AlertCenter alerts={data.alerts} />
+      <TrustOpsPanels
+        coverageGaps={data.coverageGaps}
+        scorecards={data.scorecards}
+        predictions={data.predictions}
+      />
       <Card>
         <CardContent className="grid gap-4 p-6 sm:grid-cols-4">
           <div className="rounded-2xl bg-lavender-50 p-4">
@@ -45,14 +53,16 @@ export default async function SupervisorDashboardPage() {
           <CardContent className="space-y-4 p-6">
             <h3 className="text-xl font-semibold">Validation backlog</h3>
             {data.flagged.length ? (
-              data.flagged.map((submission) => (
-                <div key={submission.submissionId} className="rounded-[1.75rem] bg-butter-50 p-4">
+              data.flagged.map((reviewCase) => (
+                <div key={reviewCase.id} className="rounded-[1.75rem] bg-butter-50 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-semibold">{submission.householdId}</p>
-                      <p className="text-sm text-muted-foreground">{submission.validationMessage}</p>
+                      <p className="font-semibold">{reviewCase.householdId ?? reviewCase.currentSubmissionId}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {reviewCase.riskSignals.join(", ").replaceAll("_", " ")}
+                      </p>
                     </div>
-                    <StatusBadge status={submission.validationStatus} />
+                    <StatusBadge status={reviewCase.status} />
                   </div>
                 </div>
               ))

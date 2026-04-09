@@ -4,7 +4,7 @@ import { getSupervisorDashboardData } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function ValidationPage() {
-  const session = await requireSession(["supervisor", "admin"]);
+  const session = await requireSession(["admin"]);
   const data = await getSupervisorDashboardData(session);
 
   return (

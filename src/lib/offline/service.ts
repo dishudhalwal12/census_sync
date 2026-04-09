@@ -13,12 +13,39 @@ import type { AuthSession } from "@/types/session";
 import type { HouseholdSubmission, SubmissionSyncStatus } from "@/types/domain";
 
 const ACTIVE_OWNER_KEY = "active-owner-uid";
+const DEVICE_ID_KEY = "device-id";
 
-function toSubmission(
+async function getOrCreateDeviceId(preferredDeviceId?: string) {
+  if (preferredDeviceId) {
+    await censusSyncDb.deviceMeta.put({
+      key: DEVICE_ID_KEY,
+      value: preferredDeviceId
+    });
+    return preferredDeviceId;
+  }
+
+  const existing = await censusSyncDb.deviceMeta.get(DEVICE_ID_KEY);
+  if (existing?.value) {
+    return existing.value;
+  }
+
+  const generated =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `device-${Date.now()}`;
+  await censusSyncDb.deviceMeta.put({
+    key: DEVICE_ID_KEY,
+    value: generated
+  });
+  return generated;
+}
+
+async function toSubmission(
   values: HouseholdFormValues,
   session: AuthSession
-): HouseholdSubmission {
+): Promise<HouseholdSubmission> {
   const now = new Date().toISOString();
+  const sourceDeviceId = await getOrCreateDeviceId(values.sourceDeviceId);
 
   return {
     submissionId: values.submissionId,
@@ -38,7 +65,15 @@ function toSubmission(
       cluster: values.cluster
     },
     members: values.members,
-    housing: values.housing,
+    housing: {
+      dwellingType: values.housing.dwellingType ?? "Not captured",
+      ownershipStatus: values.housing.ownershipStatus ?? "Not captured",
+      rooms: values.housing.rooms ?? 0,
+      drinkingWaterSource: values.housing.drinkingWaterSource ?? "Not captured",
+      sanitationType: values.housing.sanitationType ?? "Not captured",
+      electricityAvailable: values.housing.electricityAvailable ?? false,
+      internetAvailable: values.housing.internetAvailable ?? false
+    },
     notes: values.notes,
     geo: values.geoEnabled ? values.geo : undefined,
     capturedAt: now,
@@ -48,6 +83,14 @@ function toSubmission(
     reviewStatus: "not_required",
     flags: [],
     dedupeKey: createDedupeKey(values.householdId, values.submissionId),
+    visitOutcome: values.visitOutcome,
+    language: values.language,
+    consent: values.consent,
+    sourceDeviceId,
+    revisionGroupId: values.revisionGroupId,
+    revisionNumber: values.revisionNumber,
+    revisitOfSubmissionId: values.revisitOfSubmissionId,
+    startedAt: values.startedAt,
     audit: {
       createdBy: session.uid,
       createdAt: now,
@@ -105,7 +148,7 @@ export async function queueSubmission(
   values: HouseholdFormValues,
   session: AuthSession
 ) {
-  const payload = toSubmission(values, session);
+  const payload = await toSubmission(values, session);
   const queueItem: SyncQueueItem = {
     id: payload.submissionId,
     ownerUid: session.uid,

@@ -5,9 +5,16 @@ import { createManagedExport } from "@/lib/server/mutation-service";
 
 export async function POST(request: Request) {
   try {
-    const session = await requireRouteSession(["supervisor", "admin"]);
+    const session = await requireRouteSession(["admin"]);
     const body = (await request.json()) as {
       format?: "csv" | "pdf";
+      packType?:
+        | "district_summary"
+        | "enumerator_productivity"
+        | "anomaly_report"
+        | "pending_review"
+        | "revisit_backlog"
+        | "coverage_completion";
       projectId?: string;
       filters?: {
         status?: string;
@@ -24,6 +31,7 @@ export async function POST(request: Request) {
     const result = await createManagedExport(
       {
         format: body.format,
+        packType: body.packType,
         projectId: body.projectId,
         filters: body.filters
       },

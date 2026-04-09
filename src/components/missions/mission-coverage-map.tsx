@@ -17,6 +17,22 @@ function colorFromStatus(status: MissionCoveragePoint["status"]) {
   return "#b678f8";
 }
 
+function colorFromLayer(layer?: MissionCoveragePoint["layer"]) {
+  if (layer === "geo_anomaly") {
+    return "#ef4444";
+  }
+
+  if (layer === "revisit") {
+    return "#f59e0b";
+  }
+
+  if (layer === "flagged") {
+    return "#b678f8";
+  }
+
+  return "#22c55e";
+}
+
 export function MissionCoverageMap({ points }: { points: MissionCoveragePoint[] }) {
   if (!points.length) {
     return (
@@ -56,8 +72,8 @@ export function MissionCoverageMap({ points }: { points: MissionCoveragePoint[] 
                 center={[point.latitude, point.longitude]}
                 radius={12}
                 pathOptions={{
-                  color: colorFromStatus(point.status),
-                  fillColor: colorFromStatus(point.status),
+                  color: colorFromLayer(point.layer) ?? colorFromStatus(point.status),
+                  fillColor: colorFromLayer(point.layer) ?? colorFromStatus(point.status),
                   fillOpacity: 0.72
                 }}
               >
@@ -67,6 +83,8 @@ export function MissionCoverageMap({ points }: { points: MissionCoveragePoint[] 
                     <p>{point.enumeratorName}</p>
                     <p>{point.scope.district} / {point.scope.block}</p>
                     <p>{point.distanceMeters} m from target</p>
+                    <p>Layer: {point.layer?.replaceAll("_", " ") ?? point.status}</p>
+                    {point.riskLevel ? <p>Risk: {point.riskLevel}</p> : null}
                   </div>
                 </Popup>
               </CircleMarker>

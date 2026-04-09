@@ -4,7 +4,7 @@ import { getExportRequests, getProjects, getSubmissions } from "@/lib/data/serve
 import { requireSession } from "@/lib/server/session";
 
 export default async function ReportsPage() {
-  const session = await requireSession(["supervisor", "admin"]);
+  const session = await requireSession(["admin"]);
   const [submissions, exportsHistory, projects] = await Promise.all([
     getSubmissions(session),
     getExportRequests(session),

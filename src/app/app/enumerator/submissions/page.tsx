@@ -5,7 +5,7 @@ import { getEnumeratorDashboardData } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function EnumeratorSubmissionsPage() {
-  const session = await requireSession(["enumerator"]);
+  const session = await requireSession(["employee", "admin"]);
   const data = await getEnumeratorDashboardData(session);
 
   return (

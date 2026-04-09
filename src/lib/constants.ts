@@ -1,45 +1,31 @@
-import type { UserRole } from "@/types/domain";
+import type { WorkspaceRole } from "@/types/domain";
 
-export const ROLE_LABELS: Record<UserRole, string> = {
-  enumerator: "Enumerator",
-  supervisor: "Supervisor",
+export const ROLE_LABELS: Record<WorkspaceRole, string> = {
+  employee: "Employee",
   admin: "Administrator"
 };
 
 export const APP_NAME = "CensusSync";
 export const APP_DESCRIPTION =
-  "Offline-first field survey operations for enumerators, supervisors, and administrators.";
+  "Offline-first census campaigns for employees, public participants, and administrators.";
 
-export const ROLE_HOME: Record<UserRole, string> = {
-  enumerator: "/app/enumerator",
-  supervisor: "/app/supervisor",
+export const ROLE_HOME: Record<WorkspaceRole, string> = {
+  employee: "/app/employee",
   admin: "/app/admin"
 };
 
-export const NAV_BY_ROLE: Record<UserRole, { label: string; href: string }[]> = {
-  enumerator: [
-    { label: "Overview", href: "/app/enumerator" },
-    { label: "Assigned Censuses", href: "/app/enumerator/missions" },
-    { label: "Legacy Household Form", href: "/app/enumerator/forms/new" },
-    { label: "Drafts & Queue", href: "/app/enumerator/drafts" },
-    { label: "Submission History", href: "/app/enumerator/submissions" },
-    { label: "Settings", href: "/app/settings" }
-  ],
-  supervisor: [
-    { label: "Overview", href: "/app/supervisor" },
-    { label: "Mission Ops", href: "/app/supervisor/missions" },
-    { label: "Validation Queue", href: "/app/supervisor/validation" },
-    { label: "Coverage Map", href: "/app/supervisor/map" },
-    { label: "Reports", href: "/app/supervisor/reports" },
+export const NAV_BY_ROLE: Record<WorkspaceRole, { label: string; href: string }[]> = {
+  employee: [
+    { label: "Overview", href: "/app/employee" },
+    { label: "Campaign Inbox", href: "/app/employee/campaigns" },
     { label: "Settings", href: "/app/settings" }
   ],
   admin: [
     { label: "Overview", href: "/app/admin" },
-    { label: "Mission Builder", href: "/app/admin/missions" },
+    { label: "Campaign Builder", href: "/app/admin/campaigns" },
+    { label: "Analytics", href: "/app/admin/analytics" },
     { label: "Users", href: "/app/admin/users" },
-    { label: "Templates", href: "/app/admin/templates" },
-    { label: "Audit Logs", href: "/app/admin/audit" },
-    { label: "Reports", href: "/app/supervisor/reports" },
+    { label: "Legacy Ops", href: "/app/admin/command-center" },
     { label: "Settings", href: "/app/settings" }
   ]
 };

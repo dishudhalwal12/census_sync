@@ -32,7 +32,7 @@ export function AppShell({
                 Welcome back, {session.name.split(" ")[0]}
               </h1>
               <p className="text-sm text-muted-foreground">
-                Offline-first field operations with live validation, coverage, and export visibility.
+                Multi-tenant census campaigns with offline field capture, public survey links, and live analytics.
               </p>
             </div>
           </div>

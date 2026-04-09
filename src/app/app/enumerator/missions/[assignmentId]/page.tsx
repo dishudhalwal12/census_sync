@@ -9,7 +9,7 @@ export default async function MissionWorkspacePage({
 }: {
   params: Promise<{ assignmentId: string }>;
 }) {
-  const session = await requireSession(["enumerator"]);
+  const session = await requireSession(["employee", "admin"]);
   const { assignmentId } = await params;
   const missionPackage = await getMissionPackageByAssignmentId(assignmentId, session);
 

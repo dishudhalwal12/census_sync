@@ -1,13 +1,13 @@
 import { redirect } from "next/navigation";
 
-import { MissionWorkspace } from "@/components/missions/mission-workspace";
+import { CampaignWorkspace } from "@/components/employee/campaign-workspace";
 import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { getMissionPackageByShareCode } from "@/lib/data/server";
+import { getCampaignFieldPackageByToken } from "@/lib/campaigns/server";
 import { getSession } from "@/lib/server/session";
 
-export default async function SharedFieldMissionPage({
+export default async function EmployeeFieldCampaignPage({
   params
 }: {
   params: Promise<{ shareCode: string }>;
@@ -19,11 +19,11 @@ export default async function SharedFieldMissionPage({
     redirect(`/login?next=${encodeURIComponent(`/field/${shareCode}`)}`);
   }
 
-  if (session.role !== "enumerator") {
+  if (session.role !== "employee" && session.role !== "admin") {
     redirect("/unauthorized");
   }
 
-  const missionPackage = await getMissionPackageByShareCode(shareCode, session);
+  const campaignPackage = await getCampaignFieldPackageByToken(shareCode, session);
 
   return (
     <div className="section-shell min-h-screen py-8">
@@ -31,13 +31,18 @@ export default async function SharedFieldMissionPage({
         <Logo />
         <Badge variant="lavender">Secure field link</Badge>
       </div>
-      {missionPackage ? (
-        <MissionWorkspace session={session} initialPackage={missionPackage} shareCode={shareCode} />
+      {campaignPackage ? (
+        <CampaignWorkspace
+          session={session}
+          initialPackage={campaignPackage}
+          assignmentId={campaignPackage.assignment.id}
+          token={shareCode}
+        />
       ) : (
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">
-            This secure field link is not available for the signed-in user. Make sure the assigned
-            enumerator opens the link, or cache it once while online before trying again offline.
+            This secure field link is not available for the signed-in employee. Make sure the assigned
+            employee opens the correct link once while online before relying on offline mode.
           </CardContent>
         </Card>
       )}

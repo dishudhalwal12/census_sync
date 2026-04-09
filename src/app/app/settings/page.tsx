@@ -1,11 +1,19 @@
 import { Bell, Smartphone, UserCog } from "lucide-react";
 
+import { AlertCenter } from "@/components/shared/alert-center";
 import { PageHeader } from "@/components/layout/page-header";
+import { GeminiSettingsClient } from "@/components/settings/gemini-settings-client";
 import { Card, CardContent } from "@/components/ui/card";
+import { getAlerts } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
+import { getUserGeminiSettingsStatus } from "@/lib/server/user-settings";
 
 export default async function SettingsPage() {
   const session = await requireSession();
+  const [alerts, geminiSettings] = await Promise.all([
+    getAlerts(session),
+    getUserGeminiSettingsStatus(session)
+  ]);
 
   return (
     <div>
@@ -46,6 +54,16 @@ export default async function SettingsPage() {
             </p>
           </CardContent>
         </Card>
+      </div>
+      <div className="mt-6">
+        <GeminiSettingsClient
+          initialHasCustomGeminiApiKey={geminiSettings.hasCustomGeminiApiKey}
+          initialGeminiApiKeyPreview={geminiSettings.geminiApiKeyPreview}
+          initialGeminiModel={geminiSettings.geminiModel}
+        />
+      </div>
+      <div className="mt-6">
+        <AlertCenter alerts={alerts} title="Notifications and alerts" />
       </div>
     </div>
   );

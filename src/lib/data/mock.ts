@@ -1,7 +1,9 @@
 import type {
   Assignment,
+  AlertEvent,
   AuditLogEvent,
   CoveragePoint,
+  ReviewCase,
   ExportRequest,
   HouseholdSubmission,
   MissionAssignmentPackage,
@@ -63,7 +65,7 @@ export const demoUsers: UserProfile[] = [
     uid: "demo-enumerator",
     name: "Ananya Rao",
     email: "enumerator@demo.censussync.app",
-    role: "enumerator",
+    role: "employee",
     status: "active",
     projectId: "project-census-2026",
     assignmentLabel: "South District / Block A",
@@ -76,7 +78,7 @@ export const demoUsers: UserProfile[] = [
     uid: "demo-supervisor",
     name: "Rahul Mehta",
     email: "supervisor@demo.censussync.app",
-    role: "supervisor",
+    role: "admin",
     status: "active",
     projectId: "project-census-2026",
     assignmentLabel: "South District",
@@ -239,7 +241,13 @@ export const demoTemplates: TemplateVersion[] = [
             type: "text",
             kind: "text",
             required: true,
-            placeholder: "Gupta General Store"
+            placeholder: "Gupta General Store",
+            translations: {
+              hi: {
+                label: "व्यवसाय का नाम",
+                placeholder: "गुप्ता जनरल स्टोर"
+              }
+            }
           },
           {
             key: "businessType",
@@ -252,14 +260,24 @@ export const demoTemplates: TemplateVersion[] = [
               { label: "Clinic", value: "clinic" },
               { label: "Restaurant", value: "restaurant" },
               { label: "Pharmacy", value: "pharmacy" }
-            ]
+            ],
+            translations: {
+              hi: {
+                label: "व्यवसाय का प्रकार"
+              }
+            }
           },
           {
             key: "openToPublic",
             label: "Currently open to the public",
             type: "checkbox",
             kind: "boolean",
-            required: true
+            required: true,
+            translations: {
+              hi: {
+                label: "क्या यह अभी जनता के लिए खुला है"
+              }
+            }
           }
         ]
       },
@@ -274,7 +292,12 @@ export const demoTemplates: TemplateVersion[] = [
             type: "number",
             kind: "number",
             required: true,
-            validation: { min: 0, max: 2000 }
+            validation: { min: 0, max: 2000 },
+            translations: {
+              hi: {
+                label: "प्रतिदिन अनुमानित ग्राहक"
+              }
+            }
           },
           {
             key: "serviceArea",
@@ -282,7 +305,13 @@ export const demoTemplates: TemplateVersion[] = [
             type: "textarea",
             kind: "textarea",
             required: true,
-            placeholder: "Ward 7, nearby blocks, and school area"
+            placeholder: "Ward 7, nearby blocks, and school area",
+            translations: {
+              hi: {
+                label: "सेवा क्षेत्र",
+                placeholder: "वार्ड 7, आसपास के ब्लॉक और स्कूल क्षेत्र"
+              }
+            }
           },
           {
             key: "peakDays",
@@ -298,6 +327,33 @@ export const demoTemplates: TemplateVersion[] = [
               { label: "Saturday", value: "sat" },
               { label: "Sunday", value: "sun" }
             ]
+          },
+          {
+            key: "regulatedInventory",
+            label: "Regulated inventory handled",
+            type: "textarea",
+            kind: "textarea",
+            placeholder: "Only visible for pharmacies",
+            visibilityRules: [
+              {
+                fieldKey: "businessType",
+                operator: "equals",
+                value: "pharmacy"
+              }
+            ],
+            requiredRules: [
+              {
+                fieldKey: "businessType",
+                operator: "equals",
+                value: "pharmacy"
+              }
+            ],
+            translations: {
+              hi: {
+                label: "नियंत्रित इन्वेंटरी विवरण",
+                placeholder: "यह प्रश्न केवल फार्मेसी के लिए दिखेगा"
+              }
+            }
           },
           {
             key: "visitedOn",
@@ -379,6 +435,15 @@ export const demoMissionSubmissions: MissionSubmission[] = [
     status: "completed",
     anomalyFlags: [],
     dedupeKey: "assignment-mission-2::mission-sub-001",
+    riskScore: 8,
+    riskLevel: "low",
+    riskSignals: [],
+    visitOutcome: "survey_completed",
+    language: "en",
+    sourceDeviceId: "device-demo-a",
+    revisionGroupId: "mission-sub-001",
+    revisionNumber: 1,
+    startedAt: iso(-2),
     capturedAt: iso(-2),
     updatedAt: iso(-2),
     audit: {
@@ -448,6 +513,21 @@ export const demoSubmissions: HouseholdSubmission[] = [
     reviewStatus: "not_required",
     flags: [],
     dedupeKey: "SD-BA-0001::sub-001",
+    riskScore: 12,
+    riskLevel: "low",
+    riskSignals: [],
+    visitOutcome: "survey_completed",
+    language: "en",
+    consent: {
+      mode: "verbal",
+      capturedAt: iso(-1),
+      collectorName: "Ananya Rao",
+      acknowledged: true
+    },
+    sourceDeviceId: "device-demo-a",
+    revisionGroupId: "SD-BA-0001",
+    revisionNumber: 1,
+    startedAt: iso(-1),
     audit: {
       createdBy: "demo-enumerator",
       createdAt: iso(-1),
@@ -501,6 +581,22 @@ export const demoSubmissions: HouseholdSubmission[] = [
     reviewStatus: "pending_review",
     flags: ["duplicate_household"],
     dedupeKey: "SD-BB-0042::sub-002",
+    riskScore: 72,
+    riskLevel: "high",
+    riskSignals: ["duplicate_household_id", "fuzzy_address_match"],
+    reviewCaseId: "review-sub-002",
+    visitOutcome: "survey_completed",
+    language: "en",
+    consent: {
+      mode: "written",
+      capturedAt: iso(-2),
+      collectorName: "Ananya Rao",
+      acknowledged: true
+    },
+    sourceDeviceId: "device-demo-a",
+    revisionGroupId: "SD-BB-0042",
+    revisionNumber: 1,
+    startedAt: iso(-2),
     audit: {
       createdBy: "demo-enumerator",
       createdAt: iso(-2),
@@ -515,7 +611,7 @@ export const demoAuditLogs: AuditLogEvent[] = [
     id: "audit-1",
     actorId: "demo-supervisor",
     actorName: "Rahul Mehta",
-    actorRole: "supervisor",
+    actorRole: "admin",
     action: "reviewed_submission",
     targetType: "submission",
     targetId: "sub-002",
@@ -550,7 +646,7 @@ export const demoAuditLogs: AuditLogEvent[] = [
     id: "audit-4",
     actorId: "demo-enumerator",
     actorName: "Ananya Rao",
-    actorRole: "enumerator",
+    actorRole: "employee",
     action: "mission_proof_captured",
     targetType: "mission_submission",
     targetId: "mission-sub-001",
@@ -576,6 +672,103 @@ export const demoExports: ExportRequest[] = [
       dateFrom: iso(-7),
       dateTo: iso(0)
     }
+  }
+];
+
+export const demoReviewCases: ReviewCase[] = [
+  {
+    id: "review-sub-002",
+    submissionId: "sub-002",
+    currentSubmissionId: "sub-002",
+    projectId: "project-census-2026",
+    scope: { district: "South District", block: "Block B", cluster: "Ward 3" },
+    enumeratorId: "demo-enumerator",
+    householdId: "SD-BB-0042",
+    status: "revisit_requested",
+    riskLevel: "high",
+    riskScore: 72,
+    riskSignals: ["duplicate_household_id", "fuzzy_address_match"],
+    duplicateCandidates: [
+      {
+        submissionId: "sub-002",
+        matchedSubmissionId: "sub-001",
+        confidence: "medium",
+        reasons: ["same_phone_number"]
+      }
+    ],
+    latestActionAt: iso(-1),
+    createdAt: iso(-2),
+    updatedAt: iso(-1),
+    comments: [
+      {
+        id: "review-comment-1",
+        actorId: "demo-supervisor",
+        actorName: "Rahul Mehta",
+        actorRole: "admin",
+        message: "Please revisit and verify whether this is a duplicate or a new tenant.",
+        createdAt: iso(-1)
+      }
+    ],
+    timeline: [
+      {
+        id: "review-event-1",
+        type: "created",
+        actorId: "system",
+        actorName: "Trust engine",
+        actorRole: "system",
+        createdAt: iso(-2),
+        detail: "Case created because duplicate and address-match signals were detected."
+      },
+      {
+        id: "review-event-2",
+        type: "revisit_requested",
+        actorId: "demo-supervisor",
+        actorName: "Rahul Mehta",
+        actorRole: "admin",
+        createdAt: iso(-1),
+        detail: "Requested revisit for duplicate verification."
+      }
+    ],
+    revisitTask: {
+      id: "review-sub-002-revisit",
+      submissionId: "sub-002",
+      reviewCaseId: "review-sub-002",
+      enumeratorId: "demo-enumerator",
+      reasons: ["duplicate_check", "address_mismatch"],
+      status: "open",
+      requestedAt: iso(-1),
+      requestedBy: "demo-supervisor",
+      requestedByName: "Rahul Mehta",
+      notes: "Confirm whether the household shifted recently."
+    }
+  }
+];
+
+export const demoAlerts: AlertEvent[] = [
+  {
+    id: "alert-gap-1",
+    title: "Coverage gap at risk",
+    description: "Block B is behind target completion and still has a revisit backlog.",
+    severity: "critical",
+    status: "open",
+    audience: "admin",
+    projectId: "project-census-2026",
+    scope: { district: "South District", block: "Block B", cluster: "Ward 3" },
+    relatedEntityType: "coverage_gap",
+    relatedEntityId: "gap-target-project-census-2026-demo-enumerator",
+    createdAt: iso(0)
+  },
+  {
+    id: "alert-review-1",
+    title: "High-risk review case",
+    description: "One flagged submission needs revisit because of duplicate and address-match signals.",
+    severity: "warning",
+    status: "open",
+    audience: "admin",
+    projectId: "project-census-2026",
+    relatedEntityType: "review_case",
+    relatedEntityId: "review-sub-002",
+    createdAt: iso(0)
   }
 ];
 

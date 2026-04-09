@@ -11,6 +11,9 @@ import type { AuthSession } from "@/types/session";
 export function SidebarNav({ session }: { session: AuthSession }) {
   const pathname = usePathname();
   const items = NAV_BY_ROLE[session.role];
+  const activeHref = [...items]
+    .sort((left, right) => right.href.length - left.href.length)
+    .find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))?.href;
 
   return (
     <aside className="surface hidden w-80 shrink-0 flex-col gap-8 p-6 xl:flex">
@@ -19,15 +22,14 @@ export function SidebarNav({ session }: { session: AuthSession }) {
         <div>
           <p className="font-display text-3xl font-semibold">CensusSync</p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Premium census operations cockpit for offline-first collection.
+            Org-scoped census campaigns for admins, field employees, and public participants.
           </p>
         </div>
       </div>
 
       <nav className="space-y-2">
         {items.map((item) => {
-          const isActive =
-            pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const isActive = item.href === activeHref;
 
           return (
             <Link
@@ -52,7 +54,7 @@ export function SidebarNav({ session }: { session: AuthSession }) {
           Assignment Scope
         </p>
         <p className="mt-3 text-base font-semibold">
-          {session.scopes[0]?.district ?? "District scope pending"}
+          {session.scopes[0]?.district ?? "Organization scope"}
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
           {session.scopes[0]?.block ?? "Block scope pending"}

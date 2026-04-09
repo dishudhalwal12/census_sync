@@ -34,11 +34,13 @@ import {
 import { firebaseAuth } from "@/lib/firebase/client";
 import { setActiveOfflineOwner } from "@/lib/offline/service";
 import { isRole } from "@/lib/roles";
-import type { UserStatus } from "@/types/domain";
+import type { UserStatus, WorkspaceRole } from "@/types/domain";
 import type { AuthSession } from "@/types/session";
 
 const authSchema = z.object({
   name: z.string().optional(),
+  organizationName: z.string().optional(),
+  requestedRole: z.enum(["admin", "employee"]),
   email: z.string().email("Enter a valid email address."),
   password: z.string().min(6, "Password must be at least 6 characters."),
   confirmPassword: z.string().optional()
@@ -88,6 +90,8 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
     resolver: zodResolver(authSchema),
     defaultValues: {
       name: "",
+      organizationName: "",
+      requestedRole: "admin",
       email: "",
       password: "",
       confirmPassword: ""
@@ -97,11 +101,15 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
   async function ensureUserProfile({
     uid,
     email,
-    name
+    name,
+    organizationName,
+    requestedRole
   }: {
     uid: string;
     email: string;
     name: string;
+    organizationName?: string;
+    requestedRole?: WorkspaceRole;
   }) {
     const auth = firebaseAuth;
 
@@ -125,7 +133,9 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
           idToken,
           uid,
           email,
-          name
+          name,
+          organizationName,
+          requestedRole
         })
       });
 
@@ -140,6 +150,7 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
         role?: string;
         status?: UserStatus;
         projectId?: string;
+        orgId?: string;
         scopes?: AuthSession["scopes"];
       };
     } catch (error) {
@@ -237,7 +248,11 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
         throw new Error("Unable to resolve the authenticated user.");
       }
 
-      const profile = await ensureUserProfile(sessionUser);
+      const profile = await ensureUserProfile({
+        ...sessionUser,
+        organizationName: values.organizationName?.trim(),
+        requestedRole: authMode === "register" ? values.requestedRole : undefined
+      });
       if (profile.role && !isRole(profile.role)) {
         throw new Error("Your account role is not recognized by the platform.");
       }
@@ -249,10 +264,11 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
 
       const resolvedRole: AuthSession["role"] = isRole(profile.role ?? "")
         ? (profile.role as AuthSession["role"])
-        : "enumerator";
+        : "employee";
 
       await establishSession(idToken, sessionUser.uid, {
         uid: sessionUser.uid,
+        orgId: profile.orgId ?? "org-demo-censussync",
         email: sessionUser.email,
         name: sessionUser.name,
         role: resolvedRole,
@@ -264,7 +280,7 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
       toast.success(
         authMode === "register"
           ? "Account created successfully."
-          : `Signed in successfully as ${profile.role ?? "enumerator"}.`
+          : `Signed in successfully as ${profile.role ?? "employee"}.`
       );
       router.replace(nextPath);
       router.refresh();
@@ -284,6 +300,8 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
     form.setValue("confirmPassword", "");
     if (mode === "signin") {
       form.setValue("name", "");
+      form.setValue("organizationName", "");
+      form.setValue("requestedRole", "admin");
     }
   }
 
@@ -310,7 +328,7 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
         return;
       }
 
-      await setActiveOfflineOwner(`demo-${role}`);
+      await setActiveOfflineOwner(role === "employee" ? "demo-enumerator" : `demo-${role}`);
       toast.success(`Entered demo mode as ${role}.`);
       router.replace(nextPath);
       router.refresh();
@@ -369,12 +387,12 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
           <CardTitle className="font-display text-3xl">
             {authMode === "signin"
               ? "Secure role-based sign-in"
-              : "Create your field operations account"}
+              : "Create your workspace account"}
           </CardTitle>
           <CardDescription>
             {authMode === "signin"
               ? "Email/password authentication with server-issued sessions, scoped data access, and real Firebase persistence."
-              : "New self-serve accounts start as enumerators in a clean workspace and can be reassigned later by an admin."}
+              : "Choose whether this account should open the administrator or employee experience after signup."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -394,11 +412,62 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
                 ) : null}
               </div>
             ) : null}
+            {authMode === "register" ? (
+              <div className="space-y-2">
+                <Label>Role</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    {
+                      role: "admin",
+                      label: "Administrator",
+                      description: "Manage campaigns, analytics, and users."
+                    },
+                    {
+                      role: "employee",
+                      label: "Employee",
+                      description: "Collect data and work assigned field flows."
+                    }
+                  ] as const).map((option) => {
+                    const selected = form.watch("requestedRole") === option.role;
+
+                    return (
+                      <button
+                        key={option.role}
+                        type="button"
+                        onClick={() => form.setValue("requestedRole", option.role)}
+                        className={`rounded-[1.25rem] border px-4 py-3 text-left transition ${
+                          selected
+                            ? "border-lavender-400 bg-lavender-50"
+                            : "border-black/10 bg-white"
+                        }`}
+                      >
+                        <p className="font-semibold">{option.label}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{option.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            {authMode === "register" ? (
+              <div className="space-y-2">
+                <Label htmlFor="organizationName">Organization name</Label>
+                <Input
+                  id="organizationName"
+                  placeholder={
+                    form.watch("requestedRole") === "admin"
+                      ? "Acme Research Group"
+                      : "Optional organization name"
+                  }
+                  {...form.register("organizationName")}
+                />
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="email">Work email</Label>
               <Input
                 id="email"
-                placeholder="enumerator@district.gov"
+                placeholder="admin@acme.com"
                 {...form.register("email")}
               />
               {form.formState.errors.email ? (
@@ -474,8 +543,8 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
           ) : null}
           <div className="rounded-[1.75rem] bg-lavender-50 p-4 text-sm text-muted-foreground">
             {authMode === "signin"
-              ? "Disabled account? Contact your district admin or central operations lead for reactivation."
-              : "After registering, your account enters the platform as an enumerator profile by default."}
+              ? "Disabled account? Contact your organization admin for reactivation or invite support."
+              : "Choose the role you want for this account before registering. The app will route you into the matching workspace after signup."}
           </div>
         </CardContent>
       </Card>
@@ -496,16 +565,12 @@ export function LoginForm({ nextPath = "/app" }: { nextPath?: string }) {
             <>
               {[
                 {
-                  role: "enumerator",
-                  description: "Preview the offline household capture flow, drafts, and sync center."
-                },
-                {
-                  role: "supervisor",
-                  description: "Open KPI dashboards, validation queue, coverage map, and reports."
+                  role: "employee",
+                  description: "Preview the offline field collection flow, cached assignments, and sync experience."
                 },
                 {
                   role: "admin",
-                  description: "Inspect user management, templates, audit logs, and exports."
+                  description: "Inspect organization analytics, campaign builder, user invites, and links."
                 }
               ].map((entry) => (
                 <button

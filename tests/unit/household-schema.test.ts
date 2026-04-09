@@ -40,4 +40,19 @@ describe("household form schema", () => {
   it("builds a stable dedupe key", () => {
     expect(createDedupeKey("sd-ba-0007", "sub-1")).toBe("SD-BA-0007::sub-1");
   });
+
+  it("allows missed-visit outcomes without full member and housing capture", () => {
+    const form = createEmptyHouseholdForm({
+      householdId: "SD-BA-0010",
+      headOfHousehold: "Locked House",
+      addressLine1: "Lane 10",
+      district: "South District",
+      block: "Block A",
+      visitOutcome: "house_locked",
+      members: [],
+      housing: {}
+    });
+
+    expect(householdFormSchema.safeParse(form).success).toBe(true);
+  });
 });

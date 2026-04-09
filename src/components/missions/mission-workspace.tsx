@@ -34,10 +34,13 @@ import {
 } from "@/lib/missions/service";
 import {
   buildMissionGeoCheck,
+  getMissionFieldCopy,
+  getMissionSectionCopy,
   getMissionRequiredCounts,
   isGeoCheckFresh,
   validateMissionAnswers
 } from "@/lib/missions/utils";
+import { isTemplateFieldVisible } from "@/lib/trust/forms";
 import type { MissionAssignmentPackage, MissionGeoCheck, TemplateField } from "@/types/domain";
 import type { AuthSession } from "@/types/session";
 
@@ -59,12 +62,13 @@ function createEmptyAnswers(pkg: MissionAssignmentPackage) {
   ) as Record<string, unknown>;
 }
 
-function renderFieldLabel(field: TemplateField) {
+function renderFieldLabel(field: TemplateField, language: "en" | "hi") {
+  const copy = getMissionFieldCopy(field, language);
   return (
     <div className="space-y-1">
-      <Label>{field.label}</Label>
-      {field.helperText ? (
-        <p className="text-xs text-muted-foreground">{field.helperText}</p>
+      <Label>{copy.label}</Label>
+      {copy.helperText ? (
+        <p className="text-xs text-muted-foreground">{copy.helperText}</p>
       ) : null}
     </div>
   );
@@ -92,6 +96,7 @@ export function MissionWorkspace({
   const [proofFileName, setProofFileName] = useState("mission-proof.jpg");
   const [proofPreviewUrl, setProofPreviewUrl] = useState<string>();
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [language, setLanguage] = useState<"en" | "hi">("en");
   const lastSavedRef = useRef("");
 
   useEffect(() => {
@@ -181,6 +186,8 @@ export function MissionWorkspace({
 
   const sections = pkg?.template.sections ?? [];
   const currentSection = sections[step];
+  const translatedSection =
+    pkg && currentSection ? getMissionSectionCopy(pkg.template, currentSection.id, language) : null;
   const progress = useMemo(() => {
     if (!pkg) {
       return { required: 0, completed: 0 };
@@ -277,7 +284,7 @@ export function MissionWorkspace({
       return;
     }
 
-    const fieldErrors = validateMissionAnswers(pkg.template, answers);
+    const fieldErrors = validateMissionAnswers(pkg.template, answers, language);
     if (Object.keys(fieldErrors).length) {
       setErrors(fieldErrors);
       toast.error("Complete the required mission questions before submitting.");
@@ -377,6 +384,14 @@ export function MissionWorkspace({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value as "en" | "hi")}
+                className="h-10 rounded-full border border-black/10 bg-white px-4 text-sm"
+              >
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+              </select>
               <Button variant="secondary" type="button" onClick={copyShareLink}>
                 <Copy className="mr-2 h-4 w-4" />
                 Copy link
@@ -436,13 +451,22 @@ export function MissionWorkspace({
                 <p className="text-sm font-semibold uppercase tracking-[0.24em] text-black/45">
                   Section {step + 1} of {sections.length}
                 </p>
-                <h4 className="mt-2 text-xl font-semibold">{currentSection.title}</h4>
-                <p className="text-sm text-muted-foreground">{currentSection.description}</p>
+                <h4 className="mt-2 text-xl font-semibold">
+                  {translatedSection?.title ?? currentSection.title}
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  {translatedSection?.description ?? currentSection.description}
+                </p>
               </div>
 
               <div className="grid gap-4">
                 {currentSection.fields.map((field) => {
                   const value = answers[field.key];
+                  const copy = getMissionFieldCopy(field, language);
+
+                  if (!isTemplateFieldVisible(field, answers)) {
+                    return null;
+                  }
 
                   if (field.kind === "instruction") {
                     return (
@@ -450,8 +474,8 @@ export function MissionWorkspace({
                         key={field.key}
                         className="rounded-[1.5rem] border border-black/5 bg-butter-50 p-5 text-sm text-black/70"
                       >
-                        <p className="font-semibold">{field.label}</p>
-                        <p className="mt-2">{field.helperText ?? field.placeholder}</p>
+                        <p className="font-semibold">{copy.label}</p>
+                        <p className="mt-2">{copy.helperText ?? copy.placeholder}</p>
                       </div>
                     );
                   }
@@ -459,11 +483,11 @@ export function MissionWorkspace({
                   if (field.kind === "textarea" || field.type === "textarea") {
                     return (
                       <div key={field.key} className="space-y-2">
-                        {renderFieldLabel(field)}
+                        {renderFieldLabel(field, language)}
                         <Textarea
                           value={typeof value === "string" ? value : ""}
                           onChange={(event) => updateAnswer(field.key, event.target.value)}
-                          placeholder={field.placeholder}
+                          placeholder={copy.placeholder}
                           disabled={!missionUnlocked}
                         />
                         {errors[field.key] ? (
@@ -476,7 +500,7 @@ export function MissionWorkspace({
                   if (field.kind === "number" || field.type === "number") {
                     return (
                       <div key={field.key} className="space-y-2">
-                        {renderFieldLabel(field)}
+                        {renderFieldLabel(field, language)}
                         <Input
                           type="number"
                           value={typeof value === "number" ? value : ""}
@@ -486,7 +510,7 @@ export function MissionWorkspace({
                               event.target.value === "" ? "" : Number(event.target.value)
                             )
                           }
-                          placeholder={field.placeholder}
+                          placeholder={copy.placeholder}
                           disabled={!missionUnlocked}
                         />
                         {errors[field.key] ? (
@@ -499,7 +523,7 @@ export function MissionWorkspace({
                   if (field.kind === "single_select" || field.type === "select") {
                     return (
                       <div key={field.key} className="space-y-2">
-                        {renderFieldLabel(field)}
+                        {renderFieldLabel(field, language)}
                         <select
                           value={typeof value === "string" ? value : ""}
                           onChange={(event) => updateAnswer(field.key, event.target.value)}
@@ -524,7 +548,7 @@ export function MissionWorkspace({
                     const selected = Array.isArray(value) ? value : [];
                     return (
                       <div key={field.key} className="space-y-3">
-                        {renderFieldLabel(field)}
+                        {renderFieldLabel(field, language)}
                         <div className="grid gap-3 sm:grid-cols-2">
                           {field.options?.map((option) => (
                             <label
@@ -563,10 +587,10 @@ export function MissionWorkspace({
                             disabled={!missionUnlocked}
                             onChange={(event) => updateAnswer(field.key, event.target.checked)}
                           />
-                          <span>{field.label}</span>
+                          <span>{copy.label}</span>
                         </Label>
-                        {field.helperText ? (
-                          <p className="mt-2 text-xs text-muted-foreground">{field.helperText}</p>
+                        {copy.helperText ? (
+                          <p className="mt-2 text-xs text-muted-foreground">{copy.helperText}</p>
                         ) : null}
                       </div>
                     );
@@ -575,7 +599,7 @@ export function MissionWorkspace({
                   if (field.kind === "date" || field.type === "date") {
                     return (
                       <div key={field.key} className="space-y-2">
-                        {renderFieldLabel(field)}
+                        {renderFieldLabel(field, language)}
                         <Input
                           type="date"
                           value={typeof value === "string" ? value : ""}
@@ -591,11 +615,11 @@ export function MissionWorkspace({
 
                   return (
                     <div key={field.key} className="space-y-2">
-                      {renderFieldLabel(field)}
+                      {renderFieldLabel(field, language)}
                       <Input
                         value={typeof value === "string" ? value : ""}
                         onChange={(event) => updateAnswer(field.key, event.target.value)}
-                        placeholder={field.placeholder}
+                        placeholder={copy.placeholder}
                         disabled={!missionUnlocked}
                       />
                       {errors[field.key] ? (
@@ -700,7 +724,9 @@ export function MissionWorkspace({
                     step === index ? "bg-lavender-100" : "bg-black/5"
                   }`}
                 >
-                  <span className="text-sm font-medium">{section.title}</span>
+                  <span className="text-sm font-medium">
+                    {getMissionSectionCopy(pkg.template, section.id, language)?.title ?? section.title}
+                  </span>
                   <span
                     className={`h-2.5 w-2.5 rounded-full ${
                       index <= step ? "bg-lavender-400" : "bg-black/15"
@@ -739,7 +765,10 @@ export function MissionWorkspace({
                 : "Offline mode active. Mission proof stays queued on this device."}
             </div>
             {geoCheckAtStart ? (
-              <div className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-700">
+              <div
+                className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-700"
+                suppressHydrationWarning
+              >
                 <CheckCircle2 className="mb-2 h-4 w-4" />
                 Start location captured at {new Date(geoCheckAtStart.capturedAt).toLocaleTimeString()}.
               </div>

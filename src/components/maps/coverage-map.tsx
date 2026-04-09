@@ -17,6 +17,22 @@ function colorFromStatus(status: CoveragePoint["status"]) {
   return "#b678f8";
 }
 
+function colorFromLayer(layer?: CoveragePoint["layer"]) {
+  if (layer === "geo_anomaly") {
+    return "#ef4444";
+  }
+
+  if (layer === "revisit") {
+    return "#f59e0b";
+  }
+
+  if (layer === "flagged") {
+    return "#b678f8";
+  }
+
+  return "#22c55e";
+}
+
 export function CoverageMap({ points }: { points: CoveragePoint[] }) {
   if (!points.length) {
     return (
@@ -59,8 +75,8 @@ export function CoverageMap({ points }: { points: CoveragePoint[] }) {
                 center={[point.latitude, point.longitude]}
                 radius={12}
                 pathOptions={{
-                  color: colorFromStatus(point.status),
-                  fillColor: colorFromStatus(point.status),
+                  color: colorFromLayer(point.layer) ?? colorFromStatus(point.status),
+                  fillColor: colorFromLayer(point.layer) ?? colorFromStatus(point.status),
                   fillOpacity: 0.7
                 }}
               >
@@ -69,6 +85,8 @@ export function CoverageMap({ points }: { points: CoveragePoint[] }) {
                     <p className="font-semibold">{point.householdId}</p>
                     <p>{point.enumeratorName}</p>
                     <p>{point.scope.district} / {point.scope.block}</p>
+                    <p>Layer: {point.layer?.replaceAll("_", " ") ?? point.status}</p>
+                    {point.riskLevel ? <p>Risk: {point.riskLevel}</p> : null}
                   </div>
                 </Popup>
               </CircleMarker>

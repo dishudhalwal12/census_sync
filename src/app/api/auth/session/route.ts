@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { env, isDemoMode, isReviewSafeMode } from "@/lib/env";
 import { getAdminAuth } from "@/lib/firebase/admin";
-import { isRole } from "@/lib/roles";
+import { isRole, normalizeRole } from "@/lib/roles";
 import type { AuthSession } from "@/types/session";
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 5;
@@ -23,7 +23,8 @@ export async function POST(request: Request) {
 
   if (isDemoMode && body.demoRole && isRole(body.demoRole)) {
     const demoSession: AuthSession = {
-      uid: `demo-${body.demoRole}`,
+      uid: body.demoRole === "employee" ? "demo-enumerator" : `demo-${body.demoRole}`,
+      orgId: "org-demo-censussync",
       email: body.demoEmail ?? `${body.demoRole}@demo.censussync.app`,
       name: body.demoName ?? `Demo ${body.demoRole}`,
       role: body.demoRole,
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
       projectId: "project-census-2026",
       scopes: [
         {
-          district: "South District",
+          district: body.demoRole === "admin" ? "All Districts" : "South District",
           block: body.demoRole === "admin" ? "All Blocks" : "Block A"
         }
       ],
@@ -73,9 +74,10 @@ export async function POST(request: Request) {
     ) {
       const fallbackSession: AuthSession = {
         uid: body.fallbackSession.uid,
+        orgId: body.fallbackSession.orgId ?? "org-demo-censussync",
         email: body.fallbackSession.email,
         name: body.fallbackSession.name,
-        role: body.fallbackSession.role,
+        role: normalizeRole(body.fallbackSession.role),
         status:
           body.fallbackSession.status === "disabled"
             ? "disabled"
@@ -113,9 +115,10 @@ export async function POST(request: Request) {
     ) {
       const fallbackSession: AuthSession = {
         uid: body.fallbackSession.uid,
+        orgId: body.fallbackSession.orgId ?? "org-demo-censussync",
         email: body.fallbackSession.email,
         name: body.fallbackSession.name,
-        role: body.fallbackSession.role,
+        role: normalizeRole(body.fallbackSession.role),
         status:
           body.fallbackSession.status === "disabled"
             ? "disabled"

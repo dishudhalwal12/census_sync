@@ -5,20 +5,35 @@ import { Timestamp } from "firebase-admin/firestore";
 import { env } from "@/lib/env";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { readReviewCollection } from "@/lib/review-store/server";
+import {
+  buildAlerts,
+  buildCoverageGaps,
+  buildCoverageTargets,
+  buildEnumeratorScorecards,
+  buildPredictionSnapshots,
+  buildRoutePlans
+} from "@/lib/trust/engine";
 import { formatNumber } from "@/lib/utils";
 import type { AuthSession } from "@/types/session";
 import type {
   Assignment,
+  AlertEvent,
   AuditLogEvent,
   CoveragePoint,
+  CoverageGap,
+  CoverageTarget,
   DashboardKpi,
+  EnumeratorScorecard,
   ExportRequest,
   HouseholdSubmission,
   MissionAssignmentPackage,
   MissionCoveragePoint,
   MissionOperationsSnapshot,
   MissionSubmission,
+  PredictionSnapshot,
   Project,
+  ReviewCase,
+  RoutePlan,
   Scope,
   TemplateVersion,
   UserProfile
@@ -209,7 +224,11 @@ function computeEnumeratorKpis(
 
 function computeSupervisorKpis(submissions: HouseholdSubmission[]): DashboardKpi[] {
   const flagged = submissions.filter(
-    (submission) => submission.reviewStatus === "pending_review"
+    (submission) =>
+      submission.reviewStatus === "pending_review" ||
+      submission.reviewStatus === "under_review" ||
+      submission.reviewStatus === "revisit_requested" ||
+      submission.reviewStatus === "escalated"
   ).length;
   const enumerators = new Set(submissions.map((submission) => submission.enumeratorId)).size;
   const geoTagged = submissions.filter((submission) => submission.geo).length;
@@ -248,7 +267,11 @@ function computeAdminKpis(
   const activeUsers = users.filter((user) => user.status === "active").length;
   const activeProjects = projects.filter((project) => project.status === "active").length;
   const flagged = submissions.filter(
-    (submission) => submission.reviewStatus === "pending_review"
+    (submission) =>
+      submission.reviewStatus === "pending_review" ||
+      submission.reviewStatus === "under_review" ||
+      submission.reviewStatus === "revisit_requested" ||
+      submission.reviewStatus === "escalated"
   ).length;
 
   return [
@@ -279,7 +302,7 @@ function computeAdminKpis(
 export async function getProjects(session?: AuthSession) {
   const [projects, assignments] = await Promise.all([
     readCollection<Project>("projects"),
-    session?.role === "enumerator" ? readCollection<Assignment>("assignments") : Promise.resolve([])
+    session?.role === "employee" ? readCollection<Assignment>("assignments") : Promise.resolve([])
   ]);
 
   if (!session || session.role === "admin") {
@@ -297,7 +320,7 @@ export async function getProjects(session?: AuthSession) {
 
   return sortByDateDescending(
     projects.filter((project) => {
-      if (session.role === "enumerator" && assignedProjectIds.has(project.id)) {
+      if (session.role === "employee" && assignedProjectIds.has(project.id)) {
         return true;
       }
 
@@ -310,7 +333,7 @@ export async function getProjects(session?: AuthSession) {
 export async function getTemplateVersions(session?: AuthSession) {
   const [templates, assignments] = await Promise.all([
     readCollection<TemplateVersion>("template_versions"),
-    session?.role === "enumerator" ? readCollection<Assignment>("assignments") : Promise.resolve([])
+    session?.role === "employee" ? readCollection<Assignment>("assignments") : Promise.resolve([])
   ]);
   const assignedProjectIds = new Set(
     assignments
@@ -365,7 +388,7 @@ export async function getAssignments(session?: AuthSession) {
   }
 
   const filtered = assignments.filter((assignment) => {
-    if (session.role === "enumerator") {
+    if (session.role === "employee") {
       return (
         assignment.enumeratorId === session.uid || assignment.assigneeUid === session.uid
       );
@@ -398,7 +421,7 @@ export async function getSubmissions(session?: AuthSession) {
       return false;
     }
 
-    if (session.role === "enumerator") {
+    if (session.role === "employee") {
       return submission.enumeratorId === session.uid;
     }
 
@@ -415,7 +438,7 @@ export async function getUsers(session?: AuthSession) {
     return sortByDateDescending(users);
   }
 
-  if (session.role === "enumerator") {
+  if (session.role === "employee") {
     return users.filter((user) => user.uid === session.uid);
   }
 
@@ -443,7 +466,7 @@ export async function getExportRequests(session?: AuthSession) {
 
   return sortByDateDescending(
     exports.filter((item) => {
-      if (session.role === "enumerator") {
+      if (session.role === "employee") {
         return item.requesterId === session.uid;
       }
 
@@ -451,6 +474,118 @@ export async function getExportRequests(session?: AuthSession) {
       return projectMatches && item.scope.some((scope) => scopeMatches(session.scopes, scope));
     })
   );
+}
+
+export async function getReviewCases(session?: AuthSession) {
+  const reviewCases = await readCollection<ReviewCase>("review_cases");
+
+  if (!session || session.role === "admin") {
+    return sortByDateDescending(reviewCases);
+  }
+
+  if (session.role === "employee") {
+    return sortByDateDescending(
+      reviewCases.filter((reviewCase) => reviewCase.enumeratorId === session.uid)
+    );
+  }
+
+  return sortByDateDescending(
+    reviewCases.filter((reviewCase) => {
+      const projectMatches = !session.projectId || session.projectId === reviewCase.projectId;
+      return projectMatches && scopeMatches(session.scopes, reviewCase.scope);
+    })
+  );
+}
+
+export async function getAlerts(session?: AuthSession) {
+  const storedAlerts = await readCollection<AlertEvent>("alerts");
+  const [submissions, missionSubmissions, reviewCases, assignments] = await Promise.all([
+    getSubmissions(session),
+    getMissionSubmissions(session),
+    getReviewCases(session),
+    getAssignments(session)
+  ]);
+  const gaps = buildCoverageGaps(
+    submissions,
+    reviewCases,
+    buildCoverageTargets(assignments)
+  );
+  const scorecards = buildEnumeratorScorecards(submissions, missionSubmissions, reviewCases);
+  const computedAlerts = buildAlerts({
+    reviewCases,
+    gaps,
+    scorecards,
+    missionSubmissions
+  });
+  const merged = new Map<string, AlertEvent>();
+  [...storedAlerts, ...computedAlerts].forEach((alert) => {
+    if (!session || session.role === "admin") {
+      merged.set(alert.id, alert);
+      return;
+    }
+
+    if (session.role === "employee") {
+      if (alert.audience === "employee" || alert.audience === "all") {
+        merged.set(alert.id, alert);
+      }
+      return;
+    }
+
+    if (
+      alert.audience === "admin" ||
+      alert.audience === "all" ||
+      (alert.scope && scopeMatches(session.scopes, alert.scope))
+    ) {
+      merged.set(alert.id, alert);
+    }
+  });
+
+  return sortByDateDescending(Array.from(merged.values()));
+}
+
+export async function getCoverageTargets(session?: AuthSession) {
+  const assignments = await getAssignments(session);
+  return buildCoverageTargets(assignments);
+}
+
+export async function getCoverageGaps(session?: AuthSession) {
+  const [submissions, reviewCases, targets] = await Promise.all([
+    getSubmissions(session),
+    getReviewCases(session),
+    getCoverageTargets(session)
+  ]);
+
+  return buildCoverageGaps(submissions, reviewCases, targets);
+}
+
+export async function getEnumeratorScorecards(session?: AuthSession) {
+  const [submissions, missionSubmissions, reviewCases] = await Promise.all([
+    getSubmissions(session),
+    getMissionSubmissions(session),
+    getReviewCases(session)
+  ]);
+
+  return buildEnumeratorScorecards(submissions, missionSubmissions, reviewCases);
+}
+
+export async function getPredictionSnapshots(session?: AuthSession) {
+  const [targets, gaps, scorecards] = await Promise.all([
+    getCoverageTargets(session),
+    getCoverageGaps(session),
+    getEnumeratorScorecards(session)
+  ]);
+
+  return buildPredictionSnapshots(targets, gaps, scorecards);
+}
+
+export async function getRoutePlans(session?: AuthSession) {
+  const [missionPackages, reviewCases, submissions] = await Promise.all([
+    getMissionPackages(session),
+    getReviewCases(session),
+    getSubmissions(session)
+  ]);
+
+  return buildRoutePlans(missionPackages, reviewCases, submissions);
 }
 
 export async function getCoveragePoints(session?: AuthSession) {
@@ -468,7 +603,16 @@ export async function getCoveragePoints(session?: AuthSession) {
           latitude: submission.geo!.latitude,
           longitude: submission.geo!.longitude,
           submittedAt: submission.capturedAt,
-          scope: submission.scope
+          scope: submission.scope,
+          layer:
+            submission.reviewStatus === "revisit_requested"
+              ? "revisit"
+              : submission.validationStatus === "flagged"
+                ? "flagged"
+                : submission.riskSignals?.some((signal) => signal.includes("geo"))
+                  ? "geo_anomaly"
+                  : "approved",
+          riskLevel: submission.riskLevel
         }) satisfies CoveragePoint
     );
 }
@@ -481,7 +625,7 @@ export async function getMissionSubmissions(session?: AuthSession) {
   }
 
   const filtered = submissions.filter((submission) => {
-    if (session.role === "enumerator") {
+    if (session.role === "employee") {
       return submission.enumeratorId === session.uid;
     }
 
@@ -513,7 +657,14 @@ export async function getMissionCoveragePoints(session?: AuthSession) {
         distanceMeters: submission.geoCheckAtSubmit.distanceMeters,
         proofCaptured: Boolean(submission.evidence.storagePath),
         submittedAt: submission.capturedAt,
-        scope: submission.scope
+        scope: submission.scope,
+        layer:
+          submission.anomalyFlags.some((flag) => flag.includes("geo"))
+            ? "geo_anomaly"
+            : submission.validationStatus === "flagged"
+              ? "flagged"
+              : "approved",
+        riskLevel: submission.riskLevel
       }) satisfies MissionCoveragePoint
   );
 }
@@ -523,7 +674,7 @@ export async function getMissionPackages(session?: AuthSession) {
     getAssignments(session),
     getProjects(session),
     getTemplateVersions(session),
-    getUsers(session?.role === "enumerator" ? undefined : session)
+    getUsers(session?.role === "employee" ? undefined : session)
   ]);
 
   return assignments
@@ -600,14 +751,25 @@ export async function getMissionOperationsData(session?: AuthSession) {
 }
 
 export async function getEnumeratorDashboardData(session: AuthSession) {
-  const [assignments, submissions, projects, currentTemplate, missionPackages, missionSubmissions] =
+  const [
+    assignments,
+    submissions,
+    projects,
+    currentTemplate,
+    missionPackages,
+    missionSubmissions,
+    reviewCases,
+    routePlans
+  ] =
     await Promise.all([
     getAssignments(session),
     getSubmissions(session),
     getProjects(session),
     getCurrentTemplate(session),
     getMissionPackages(session),
-    getMissionSubmissions(session)
+    getMissionSubmissions(session),
+    getReviewCases(session),
+    getRoutePlans(session)
   ]);
 
   const activeProject =
@@ -620,17 +782,28 @@ export async function getEnumeratorDashboardData(session: AuthSession) {
     assignments,
     submissions,
     missionPackages,
-    missionSubmissions
+    missionSubmissions,
+    reviewCases,
+    revisitTasks: reviewCases
+      .filter((reviewCase) => reviewCase.revisitTask?.status === "open")
+      .map((reviewCase) => reviewCase.revisitTask!),
+    routePlan:
+      routePlans.find((routePlan) => routePlan.enumeratorId === session.uid) ?? null
   };
 }
 
 export async function getSupervisorDashboardData(session: AuthSession) {
-  const [submissions, auditLogs, coveragePoints, projects, missions] = await Promise.all([
+  const [submissions, auditLogs, coveragePoints, projects, missions, reviewCases, alerts, gaps, scorecards, predictions] = await Promise.all([
     getSubmissions(session),
     getAuditLogs(session),
     getCoveragePoints(session),
     getProjects(session),
-    getMissionOperationsData(session)
+    getMissionOperationsData(session),
+    getReviewCases(session),
+    getAlerts(session),
+    getCoverageGaps(session),
+    getEnumeratorScorecards(session),
+    getPredictionSnapshots(session)
   ]);
 
   return {
@@ -638,16 +811,21 @@ export async function getSupervisorDashboardData(session: AuthSession) {
     coveragePoints,
     kpis: computeSupervisorKpis(submissions),
     submissions,
-    flagged: submissions.filter(
-      (submission) => submission.reviewStatus === "pending_review"
+    flagged: reviewCases.filter((reviewCase) =>
+      ["open", "under_review", "revisit_requested", "escalated"].includes(reviewCase.status)
     ),
     auditLogs,
-    missions
+    missions,
+    reviewCases,
+    alerts,
+    coverageGaps: gaps,
+    scorecards,
+    predictions
   };
 }
 
 export async function getAdminDashboardData(session?: AuthSession) {
-  const [users, exports, templates, auditLogs, projects, submissions, missions] =
+  const [users, exports, templates, auditLogs, projects, submissions, missions, reviewCases, alerts, gaps, scorecards, predictions, routePlans] =
     await Promise.all([
     getUsers(session),
     getExportRequests(session),
@@ -655,7 +833,13 @@ export async function getAdminDashboardData(session?: AuthSession) {
     getAuditLogs(session),
     getProjects(session),
     getSubmissions(session),
-    getMissionOperationsData(session)
+    getMissionOperationsData(session),
+    getReviewCases(session),
+    getAlerts(session),
+    getCoverageGaps(session),
+    getEnumeratorScorecards(session),
+    getPredictionSnapshots(session),
+    getRoutePlans(session)
   ]);
 
   return {
@@ -666,6 +850,12 @@ export async function getAdminDashboardData(session?: AuthSession) {
     projects,
     auditLogs,
     submissions,
-    missions
+    missions,
+    reviewCases,
+    alerts,
+    coverageGaps: gaps,
+    scorecards,
+    predictions,
+    routePlans
   };
 }

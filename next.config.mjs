@@ -64,13 +64,6 @@ const nextConfig = {
         hostname: "**"
       }
     ]
-  },
-  webpack: (config, { isServer, nextRuntime }) => {
-    if (isServer && nextRuntime !== "edge") {
-      config.output.chunkFilename = "chunks/[name].js";
-    }
-
-    return config;
   }
 };
 

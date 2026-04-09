@@ -6,7 +6,7 @@ import type { HouseholdSubmission } from "@/types/domain";
 
 export async function POST(request: Request) {
   try {
-    const session = await requireRouteSession(["enumerator", "admin"]);
+    const session = await requireRouteSession(["employee", "admin"]);
     const body = (await request.json()) as { submission?: HouseholdSubmission };
 
     if (!body.submission) {

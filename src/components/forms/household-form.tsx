@@ -22,6 +22,21 @@ import {
 } from "@/lib/validators/household";
 import type { AuthSession } from "@/types/session";
 
+const COPY = {
+  en: {
+    outcomeHint: "Choose the visit outcome. If the survey could not be completed, member and housing details become optional.",
+    voice: "Voice input",
+    consent: "Consent capture",
+    language: "Form language"
+  },
+  hi: {
+    outcomeHint: "भ्रमण का परिणाम चुनें। यदि सर्वे पूरा नहीं हो पाया तो सदस्य और आवास विवरण वैकल्पिक हो जाएंगे।",
+    voice: "वॉइस इनपुट",
+    consent: "सहमति कैप्चर",
+    language: "फॉर्म भाषा"
+  }
+} as const;
+
 const steps = [
   { id: "household", label: "Household" },
   { id: "members", label: "Members" },
@@ -82,6 +97,8 @@ export function HouseholdForm({
   }, [draftId, draftQuery.data, form, initialValues]);
 
   const watchedValues = form.watch();
+  const language = form.watch("language");
+  const copy = COPY[language];
   const progress = useMemo(() => ((step + 1) / steps.length) * 100, [step]);
   const duplicateDetected = useMemo(
     () => watchedValues.householdId && existingHouseholdIds.includes(watchedValues.householdId),
@@ -154,6 +171,58 @@ export function HouseholdForm({
     }
   }
 
+  function startVoiceInput(target: "headOfHousehold" | "addressLine1" | "notes") {
+    const SpeechRecognitionCtor =
+      typeof window !== "undefined"
+        ? (window as typeof window & {
+            SpeechRecognition?: new () => {
+              lang: string;
+              interimResults: boolean;
+              maxAlternatives: number;
+              onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+              onerror: (() => void) | null;
+              start: () => void;
+            };
+            webkitSpeechRecognition?: new () => {
+              lang: string;
+              interimResults: boolean;
+              maxAlternatives: number;
+              onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+              onerror: (() => void) | null;
+              start: () => void;
+            };
+          }).SpeechRecognition ||
+          (window as typeof window & { webkitSpeechRecognition?: new () => {
+            lang: string;
+            interimResults: boolean;
+            maxAlternatives: number;
+            onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+            onerror: (() => void) | null;
+            start: () => void;
+          } }).webkitSpeechRecognition
+        : undefined;
+
+    if (!SpeechRecognitionCtor) {
+      toast.warning("Voice input is not available on this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = language === "hi" ? "hi-IN" : "en-IN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) {
+        form.setValue(target, transcript, { shouldValidate: true });
+      }
+    };
+    recognition.onerror = () => {
+      toast.warning("Voice input could not capture speech. You can continue typing manually.");
+    };
+    recognition.start();
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
       <Card>
@@ -173,14 +242,34 @@ export function HouseholdForm({
                 </button>
               ))}
             </div>
-            <div className="text-sm text-muted-foreground">
-              {isSaving ? "Saving draft..." : lastSavedAt ? `Autosaved ${new Date(lastSavedAt).toLocaleTimeString()}` : "Autosave enabled"}
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                value={language}
+                onChange={(event) =>
+                  form.setValue("language", event.target.value as HouseholdFormValues["language"])
+                }
+                className="h-10 rounded-full border border-black/10 bg-white px-4 text-sm"
+              >
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+              </select>
+              <div className="text-sm text-muted-foreground">
+                {isSaving
+                  ? "Saving draft..."
+                  : lastSavedAt
+                    ? `Autosaved ${new Date(lastSavedAt).toLocaleTimeString()}`
+                    : "Autosave enabled"}
+              </div>
             </div>
           </div>
 
           <form className="space-y-8" onSubmit={form.handleSubmit(onSubmit)}>
             {step === 0 ? (
               <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>{copy.language}</Label>
+                  <p className="text-sm text-muted-foreground">{copy.outcomeHint}</p>
+                </div>
                 <div className="space-y-2">
                   <Label>Household ID</Label>
                   <Input placeholder="SD-BA-0007" {...form.register("householdId")} />
@@ -193,6 +282,14 @@ export function HouseholdForm({
                 <div className="space-y-2">
                   <Label>Head of household</Label>
                   <Input placeholder="Enter full name" {...form.register("headOfHousehold")} />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => startVoiceInput("headOfHousehold")}
+                  >
+                    {copy.voice}
+                  </Button>
                 </div>
                 <div className="space-y-2">
                   <Label>Phone number</Label>
@@ -201,6 +298,14 @@ export function HouseholdForm({
                 <div className="space-y-2">
                   <Label>Address line 1</Label>
                   <Input placeholder="Street and locality" {...form.register("addressLine1")} />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => startVoiceInput("addressLine1")}
+                  >
+                    {copy.voice}
+                  </Button>
                 </div>
                 <div className="space-y-2">
                   <Label>Address line 2</Label>
@@ -217,6 +322,28 @@ export function HouseholdForm({
                 <div className="space-y-2">
                   <Label>Cluster / Ward</Label>
                   <Input {...form.register("cluster")} />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Visit outcome</Label>
+                  <select
+                    value={form.watch("visitOutcome")}
+                    onChange={(event) =>
+                      form.setValue(
+                        "visitOutcome",
+                        event.target.value as HouseholdFormValues["visitOutcome"]
+                      )
+                    }
+                    className="h-11 w-full rounded-2xl border border-white/70 bg-white px-4 text-sm"
+                  >
+                    <option value="survey_completed">Survey completed</option>
+                    <option value="house_locked">House locked</option>
+                    <option value="respondent_unavailable">Respondent unavailable</option>
+                    <option value="invalid_address">Invalid address</option>
+                    <option value="duplicate_household">Duplicate household</option>
+                    <option value="revisit_needed">Revisit needed</option>
+                    <option value="refused">Refused</option>
+                  </select>
+                  <p className="text-sm text-muted-foreground">{copy.outcomeHint}</p>
                 </div>
               </div>
             ) : null}
@@ -291,6 +418,15 @@ export function HouseholdForm({
                 <div className="md:col-span-2">
                   <Textarea placeholder="Enumerator notes" {...form.register("notes")} />
                 </div>
+                <div className="md:col-span-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => startVoiceInput("notes")}
+                  >
+                    {copy.voice}
+                  </Button>
+                </div>
                 <div className="md:col-span-2 flex flex-wrap gap-3">
                   <Button type="button" variant="secondary" onClick={captureGeo}>
                     <MapPin className="mr-2 h-4 w-4" />
@@ -302,6 +438,39 @@ export function HouseholdForm({
                       {form.watch("geo")?.latitude.toFixed(3)}, {form.watch("geo")?.longitude.toFixed(3)}
                     </span>
                   ) : null}
+                </div>
+                <div className="md:col-span-2 rounded-[1.5rem] border border-black/5 bg-white p-4">
+                  <div className="space-y-2">
+                    <Label>{copy.consent}</Label>
+                    <select
+                      value={form.watch("consent")?.mode ?? ""}
+                      onChange={(event) => {
+                        if (!event.target.value) {
+                          form.setValue("consent", undefined);
+                          return;
+                        }
+
+                        form.setValue("consent", {
+                          mode: event.target.value as NonNullable<HouseholdFormValues["consent"]>["mode"],
+                          capturedAt: new Date().toISOString(),
+                          collectorName: session.name,
+                          acknowledged: true
+                        });
+                      }}
+                      className="h-11 w-full rounded-2xl border border-white/70 bg-white px-4 text-sm"
+                    >
+                      <option value="">No consent recorded</option>
+                      <option value="verbal">Verbal</option>
+                      <option value="written">Written</option>
+                      <option value="signature">Signature</option>
+                      <option value="photo_acknowledged">Photo acknowledged</option>
+                    </select>
+                    {form.watch("consent") ? (
+                      <p className="text-sm text-muted-foreground">
+                        Consent recorded by {session.name} via {form.watch("consent")?.mode.replaceAll("_", " ")}.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -317,6 +486,14 @@ export function HouseholdForm({
                   <li>Household ID: {form.watch("householdId") || "Pending"}</li>
                   <li>Members: {form.watch("members").length}</li>
                   <li>Scope: {form.watch("district")} / {form.watch("block")}</li>
+                  <li>Visit outcome: {form.watch("visitOutcome").replaceAll("_", " ")}</li>
+                  <li>Language: {form.watch("language") === "hi" ? "Hindi" : "English"}</li>
+                  <li>
+                    Consent:{" "}
+                    {form.watch("consent")?.mode
+                      ? form.watch("consent")?.mode.replaceAll("_", " ")
+                      : "Not recorded"}
+                  </li>
                 </ul>
               </div>
             ) : null}

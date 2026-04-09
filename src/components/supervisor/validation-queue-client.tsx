@@ -7,17 +7,39 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/status-badge";
-import type { HouseholdSubmission } from "@/types/domain";
+import type { ReviewCase, RevisitReason } from "@/types/domain";
 
 export function ValidationQueueClient({
   flaggedSubmissions
 }: {
-  flaggedSubmissions: HouseholdSubmission[];
+  flaggedSubmissions: ReviewCase[];
 }) {
   const router = useRouter();
   const [items, setItems] = useState(flaggedSubmissions);
 
-  async function updateStatus(submissionId: string, action: "resolved" | "escalated") {
+  function inferRevisitReasons(item: ReviewCase): RevisitReason[] {
+    const reasons: RevisitReason[] = [];
+
+    if (item.riskSignals.some((signal) => signal.includes("geo"))) {
+      reasons.push("retake_geo");
+    }
+    if (item.riskSignals.some((signal) => signal.includes("proof"))) {
+      reasons.push("retake_photo");
+    }
+    if (item.duplicateCandidates.length) {
+      reasons.push("duplicate_check");
+    }
+    if (item.riskSignals.some((signal) => signal.includes("address"))) {
+      reasons.push("address_mismatch");
+    }
+
+    return reasons.length ? reasons : ["missing_fields"];
+  }
+
+  async function updateStatus(
+    item: ReviewCase,
+    action: "under_review" | "revisit_requested" | "approved" | "rejected" | "escalated"
+  ) {
     try {
       const response = await fetch("/api/supervisor/reviews", {
         method: "POST",
@@ -25,12 +47,20 @@ export function ValidationQueueClient({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          submissionId,
+          submissionId: item.currentSubmissionId,
           action,
           reviewNotes:
-            action === "resolved"
-              ? "Supervisor resolved the duplicate or validation issue."
-              : "Supervisor escalated this record for admin review."
+            action === "approved"
+              ? "Supervisor approved the record after trust and duplicate review."
+              : action === "revisit_requested"
+                ? "Field revisit required to clear trust and validation concerns."
+                : action === "under_review"
+                  ? "Supervisor started reviewing this case."
+                  : action === "rejected"
+                    ? "Supervisor rejected the record because the evidence does not reconcile."
+                    : "Supervisor escalated this record for admin review.",
+          revisitReasons:
+            action === "revisit_requested" ? inferRevisitReasons(item) : undefined
         })
       });
       const payload = (await response.json()) as { message?: string };
@@ -39,17 +69,32 @@ export function ValidationQueueClient({
       }
 
       setItems((current) =>
-        action === "resolved"
-          ? current.filter((item) => item.submissionId !== submissionId)
-          : current.map((item) =>
-              item.submissionId === submissionId
-                ? {
-                    ...item,
-                    reviewStatus: "escalated",
-                    validationMessage: "Escalated to admin for further review."
-                  }
-                : item
-            )
+        current
+          .map((entry) =>
+            entry.id === item.id
+              ? {
+                  ...entry,
+                  status: action,
+                  latestActionAt: new Date().toISOString(),
+                  revisitTask:
+                    action === "revisit_requested"
+                      ? {
+                          id: entry.revisitTask?.id ?? `${entry.id}-revisit`,
+                          submissionId: entry.currentSubmissionId,
+                          reviewCaseId: entry.id,
+                          enumeratorId: entry.enumeratorId,
+                          reasons: inferRevisitReasons(entry),
+                          status: "open" as const,
+                          requestedAt: new Date().toISOString(),
+                          requestedBy: "current-user",
+                          requestedByName: "Supervisor",
+                          notes: "Follow-up required."
+                        }
+                      : entry.revisitTask
+                }
+              : entry
+          )
+          .filter((entry) => !["approved", "rejected"].includes(entry.status))
       );
       toast.success(`Submission ${action}.`);
       router.refresh();
@@ -68,31 +113,51 @@ export function ValidationQueueClient({
             <CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_220px]">
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h3 className="text-xl font-semibold">{item.householdId}</h3>
-                  <StatusBadge status={item.validationStatus} />
+                  <h3 className="text-xl font-semibold">{item.householdId ?? item.currentSubmissionId}</h3>
+                  <StatusBadge status={item.status} />
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {item.scope.district} / {item.scope.block} • {item.enumeratorName}
+                  {item.scope.district} / {item.scope.block} • {item.enumeratorId}
                 </p>
                 <p className="text-sm leading-7 text-black/70">
-                  {item.validationMessage ?? "Flagged for duplicate or validation review."}
+                  {item.comments[item.comments.length - 1]?.message ??
+                    "Flagged for duplicate or trust-risk review."}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Review status: {item.reviewStatus.replaceAll("_", " ")}
+                  Risk score: {item.riskScore} • Review status: {item.status.replaceAll("_", " ")}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {item.flags.map((flag) => (
+                  {item.riskSignals.map((flag) => (
                     <span key={flag} className="rounded-full bg-butter-50 px-3 py-1 text-xs font-semibold">
                       {flag.replaceAll("_", " ")}
                     </span>
                   ))}
+                  {item.duplicateCandidates.map((candidate) => (
+                    <span
+                      key={candidate.matchedSubmissionId}
+                      className="rounded-full bg-lavender-50 px-3 py-1 text-xs font-semibold"
+                    >
+                      duplicate {candidate.confidence}
+                    </span>
+                  ))}
                 </div>
+                {item.revisitTask ? (
+                  <p className="text-sm text-muted-foreground">
+                    Revisit reasons: {item.revisitTask.reasons.join(", ").replaceAll("_", " ")}
+                  </p>
+                ) : null}
               </div>
               <div className="flex flex-col gap-3">
-                <Button variant="secondary" onClick={() => updateStatus(item.submissionId, "resolved")}>
-                  Resolve
+                <Button variant="secondary" onClick={() => updateStatus(item, "under_review")}>
+                  Mark under review
                 </Button>
-                <Button onClick={() => updateStatus(item.submissionId, "escalated")}>Escalate</Button>
+                <Button variant="secondary" onClick={() => updateStatus(item, "revisit_requested")}>
+                  Request revisit
+                </Button>
+                <Button onClick={() => updateStatus(item, "approved")}>Approve</Button>
+                <Button variant="secondary" onClick={() => updateStatus(item, "escalated")}>
+                  Escalate
+                </Button>
               </div>
             </CardContent>
           </Card>

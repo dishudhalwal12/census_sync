@@ -6,7 +6,7 @@ import type { MissionSubmission } from "@/types/domain";
 
 export async function POST(request: Request) {
   try {
-    const session = await requireRouteSession(["enumerator", "admin"]);
+    const session = await requireRouteSession(["employee", "admin"]);
     const formData = await request.formData();
     const serializedSubmission = formData.get("submission");
     const proofFile = formData.get("proofFile");

@@ -1,9 +1,16 @@
 import type {
+  AppLanguage,
   CoordinatePoint,
   MissionGeoCheck,
   TemplateField,
   TemplateVersion
 } from "@/types/domain";
+import {
+  getTranslatedFieldCopy,
+  getTranslatedSectionCopy,
+  isTemplateFieldRequired,
+  isTemplateFieldVisible
+} from "@/lib/trust/forms";
 
 export const GEO_CHECK_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -74,16 +81,22 @@ export function isMissionFieldComplete(field: TemplateField, value: unknown) {
 
 export function validateMissionAnswers(
   template: TemplateVersion,
-  answers: Record<string, unknown>
+  answers: Record<string, unknown>,
+  language: AppLanguage = "en"
 ) {
   const errors: Record<string, string> = {};
 
   template.sections.forEach((section) => {
     section.fields.forEach((field) => {
-      const value = answers[field.key];
+      if (!isTemplateFieldVisible(field, answers)) {
+        return;
+      }
 
-      if (field.required && !isMissionFieldComplete(field, value)) {
-        errors[field.key] = `${field.label} is required.`;
+      const value = answers[field.key];
+      const copy = getTranslatedFieldCopy(field, language);
+
+      if (isTemplateFieldRequired(field, answers) && !isMissionFieldComplete(field, value)) {
+        errors[field.key] = `${copy.label} is required.`;
         return;
       }
 
@@ -93,16 +106,16 @@ export function validateMissionAnswers(
 
       if (field.kind === "number" || field.type === "number") {
         if (typeof value !== "number" || Number.isNaN(value)) {
-          errors[field.key] = `${field.label} must be a number.`;
+          errors[field.key] = `${copy.label} must be a number.`;
           return;
         }
 
         if (typeof field.validation?.min === "number" && value < field.validation.min) {
-          errors[field.key] = `${field.label} must be at least ${field.validation.min}.`;
+          errors[field.key] = `${copy.label} must be at least ${field.validation.min}.`;
         }
 
         if (typeof field.validation?.max === "number" && value > field.validation.max) {
-          errors[field.key] = `${field.label} must be ${field.validation.max} or less.`;
+          errors[field.key] = `${copy.label} must be ${field.validation.max} or less.`;
         }
       }
 
@@ -114,14 +127,14 @@ export function validateMissionAnswers(
           typeof field.validation?.minLength === "number" &&
           value.trim().length < field.validation.minLength
         ) {
-          errors[field.key] = `${field.label} is too short.`;
+          errors[field.key] = `${copy.label} is too short.`;
         }
 
         if (
           typeof field.validation?.maxLength === "number" &&
           value.trim().length > field.validation.maxLength
         ) {
-          errors[field.key] = `${field.label} is too long.`;
+          errors[field.key] = `${copy.label} is too long.`;
         }
       }
     });
@@ -135,7 +148,12 @@ export function getMissionRequiredCounts(
   answers: Record<string, unknown>
 ) {
   const requiredFields = template.sections.flatMap((section) =>
-    section.fields.filter((field) => field.required && field.kind !== "instruction")
+    section.fields.filter(
+      (field) =>
+        isTemplateFieldVisible(field, answers) &&
+        isTemplateFieldRequired(field, answers) &&
+        field.kind !== "instruction"
+    )
   );
 
   return {
@@ -144,6 +162,15 @@ export function getMissionRequiredCounts(
       isMissionFieldComplete(field, answers[field.key])
     ).length
   };
+}
+
+export function getMissionSectionCopy(template: TemplateVersion, sectionId: string, language: AppLanguage) {
+  const section = template.sections.find((entry) => entry.id === sectionId);
+  return section ? getTranslatedSectionCopy(section, language) : null;
+}
+
+export function getMissionFieldCopy(field: TemplateField, language: AppLanguage) {
+  return getTranslatedFieldCopy(field, language);
 }
 
 export async function fingerprintBlob(blob: Blob) {

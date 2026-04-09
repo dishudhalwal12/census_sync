@@ -42,9 +42,33 @@ export const householdFormSchema = z.object({
   district: z.string().min(2, "Select a district."),
   block: z.string().min(2, "Select a block."),
   cluster: z.string().optional(),
-  members: z.array(memberSchema).min(1, "Add at least one household member."),
-  housing: housingSchema,
+  members: z.array(memberSchema),
+  housing: housingSchema.partial(),
   notes: z.string().optional(),
+  visitOutcome: z.enum([
+    "survey_completed",
+    "house_locked",
+    "respondent_unavailable",
+    "invalid_address",
+    "duplicate_household",
+    "revisit_needed",
+    "refused"
+  ]),
+  language: z.enum(["en", "hi"]),
+  consent: z
+    .object({
+      mode: z.enum(["verbal", "written", "signature", "photo_acknowledged"]),
+      capturedAt: z.string(),
+      collectorName: z.string().min(1),
+      acknowledged: z.boolean(),
+      signatureLabel: z.string().optional()
+    })
+    .optional(),
+  sourceDeviceId: z.string().min(1),
+  startedAt: z.string(),
+  revisionGroupId: z.string().min(1),
+  revisionNumber: z.number().min(1),
+  revisitOfSubmissionId: z.string().optional(),
   geoEnabled: z.boolean(),
   geo: z
     .object({
@@ -54,6 +78,49 @@ export const householdFormSchema = z.object({
       capturedAt: z.string()
     })
     .optional()
+}).superRefine((value, ctx) => {
+  if (value.visitOutcome === "survey_completed") {
+    if (value.members.length < 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["members"],
+        message: "Add at least one household member."
+      });
+    }
+
+    const requiredHousingFields = [
+      "dwellingType",
+      "ownershipStatus",
+      "rooms",
+      "drinkingWaterSource",
+      "sanitationType"
+    ] as const;
+
+    requiredHousingFields.forEach((field) => {
+      const current = value.housing[field];
+      const invalid =
+        current === undefined ||
+        current === null ||
+        current === "" ||
+        (typeof current === "number" && Number.isNaN(current));
+
+      if (invalid) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["housing", field],
+          message: "Complete the housing details for completed surveys."
+        });
+      }
+    });
+  }
+
+  if (value.consent && !value.consent.acknowledged) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["consent", "acknowledged"],
+      message: "Consent must be acknowledged before submission."
+    });
+  }
 });
 
 export type HouseholdFormValues = z.infer<typeof householdFormSchema>;
@@ -77,6 +144,15 @@ export function createEmptyHouseholdForm(overrides?: Partial<HouseholdFormValues
     district: overrides?.district ?? "",
     block: overrides?.block ?? "",
     cluster: "",
+    visitOutcome: "survey_completed",
+    language: "en",
+    sourceDeviceId:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `device-${Date.now()}`,
+    startedAt: new Date().toISOString(),
+    revisionGroupId: submissionId,
+    revisionNumber: 1,
     members: [
       {
         id: `member-${Date.now()}`,

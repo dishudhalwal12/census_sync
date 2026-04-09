@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { isReviewSafeMode } from "@/lib/env";
-import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { isRole } from "@/lib/roles";
-import type { Scope, UserRole, UserStatus } from "@/types/domain";
+import { ensureOrgAwareUserProfile } from "@/lib/campaigns/server";
+import { getAdminAuth } from "@/lib/firebase/admin";
+import { isRole, normalizeRole } from "@/lib/roles";
+import type { Scope, UserStatus, WorkspaceRole } from "@/types/domain";
 import type { AuthSession } from "@/types/session";
 
 function normalizeScopes(scopes: unknown): AuthSession["scopes"] {
@@ -29,100 +30,101 @@ function normalizeStatus(value: unknown): UserStatus {
 export async function POST(request: Request) {
   const body = (await request.json()) as {
     idToken?: string;
+    uid?: string;
     email?: string;
     name?: string;
+    organizationName?: string;
+    requestedRole?: WorkspaceRole | string;
   };
+  const requestedRole = isRole(body.requestedRole ?? "")
+    ? (body.requestedRole as WorkspaceRole)
+    : undefined;
 
-  if (!body.idToken) {
+  if (!body.idToken && !body.uid) {
     return NextResponse.json(
-      { message: "Missing Firebase ID token." },
+      { message: "Missing Firebase identity context." },
       { status: 400 }
     );
   }
 
   const adminAuth = getAdminAuth();
-  const adminDb = getAdminDb();
 
-  if (!adminAuth || !adminDb) {
-    if (isReviewSafeMode || process.env.NODE_ENV !== "production") {
+  try {
+    if (!adminAuth) {
+      if (!isReviewSafeMode && process.env.NODE_ENV === "production") {
+        return NextResponse.json(
+          { message: "Firebase Admin credentials are not configured." },
+          { status: 503 }
+        );
+      }
+
+      const profile = await ensureOrgAwareUserProfile({
+        uid: body.uid ?? `local-${Date.now()}`,
+        email: body.email ?? "",
+        name: body.name?.trim() || "Workspace User",
+        organizationName: body.organizationName,
+        requestedRole
+      });
+
       return NextResponse.json({
         ok: true,
-        role: "enumerator",
-        status: "active",
-        projectId: null,
-        scopes: [],
+        role: normalizeRole(profile.role),
+        status: normalizeStatus(profile.status),
+        projectId: profile.projectId ?? null,
+        orgId: profile.orgId,
+        scopes: normalizeScopes(profile.scopes),
         mode: "local-fallback"
       });
     }
 
-    return NextResponse.json(
-      { message: "Firebase Admin credentials are not configured." },
-      { status: 503 }
-    );
-  }
+    if (!body.idToken) {
+      return NextResponse.json(
+        { message: "Missing Firebase ID token." },
+        { status: 400 }
+      );
+    }
 
-  try {
     const decoded = await adminAuth.verifyIdToken(body.idToken);
     const userRecord = await adminAuth.getUser(decoded.uid);
-    const userRef = adminDb.collection("users").doc(decoded.uid);
-    const existing = await userRef.get();
-    const existingData = existing.data() ?? {};
-    const role = (
-      typeof existingData.role === "string" && isRole(existingData.role)
-        ? existingData.role
-        : isRole(String(decoded.role))
-          ? (decoded.role as UserRole)
-          : "enumerator"
-    ) as UserRole;
-    const status = normalizeStatus(existingData.status);
-    const scopes = normalizeScopes(existingData.scopes);
-    const projectId =
-      typeof existingData.projectId === "string" ? existingData.projectId : undefined;
-    const assignedTemplateVersion =
-      typeof existingData.assignedTemplateVersion === "string"
-        ? existingData.assignedTemplateVersion
-        : "template-unassigned";
-
-    await userRef.set(
-      {
-        uid: decoded.uid,
-        name:
-          body.name?.trim() ||
-          existingData.name ||
-          userRecord.displayName ||
-          userRecord.email?.split("@")[0] ||
-          "Field User",
-        email: body.email ?? existingData.email ?? userRecord.email ?? "",
-        role,
-        status,
-        projectId: projectId ?? null,
-        assignmentLabel: existingData.assignmentLabel ?? "Awaiting assignment",
-        scopes,
-        assignedTemplateVersion,
-        lastLoginAt: new Date().toISOString(),
-        createdAt: existingData.createdAt ?? new Date().toISOString()
-      },
-      { merge: true }
-    );
+    const profile = await ensureOrgAwareUserProfile({
+      uid: decoded.uid,
+      email: body.email ?? userRecord.email ?? "",
+      name:
+        body.name?.trim() ||
+        userRecord.displayName ||
+        userRecord.email?.split("@")[0] ||
+        "Workspace User",
+        organizationName: body.organizationName,
+      requestedRole
+    });
 
     await adminAuth.setCustomUserClaims(decoded.uid, {
-      role,
-      projectId: projectId ?? null,
-      districts: scopes.map((scope) => scope.district),
-      blocks: scopes.map((scope) => scope.block)
+      role: profile.role,
+      orgId: profile.orgId,
+      projectId: profile.projectId ?? null,
+      districts: profile.scopes.map((scope) => scope.district),
+      blocks: profile.scopes.map((scope) => scope.block)
     });
 
     return NextResponse.json({
       ok: true,
-      role,
-      status,
-      projectId: projectId ?? null,
-      scopes
+      role: profile.role,
+      status: normalizeStatus(profile.status),
+      projectId: profile.projectId ?? null,
+      orgId: profile.orgId,
+      scopes: normalizeScopes(profile.scopes)
     });
-  } catch {
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to verify the signed-in Firebase user.";
+
     return NextResponse.json(
-      { message: "Unable to verify the signed-in Firebase user." },
-      { status: 401 }
+      { message },
+      {
+        status: message.includes("invite") ? 403 : 401
+      }
     );
   }
 }

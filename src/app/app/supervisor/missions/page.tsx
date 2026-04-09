@@ -4,7 +4,7 @@ import { getMissionOperationsData } from "@/lib/data/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function SupervisorMissionOpsPage() {
-  const session = await requireSession(["supervisor", "admin"]);
+  const session = await requireSession(["admin"]);
   const missions = await getMissionOperationsData(session);
 
   return (

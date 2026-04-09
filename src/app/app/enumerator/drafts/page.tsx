@@ -3,7 +3,7 @@ import { DraftsQueueClient } from "@/components/sync/drafts-queue-client";
 import { requireSession } from "@/lib/server/session";
 
 export default async function DraftsPage() {
-  const session = await requireSession(["enumerator"]);
+  const session = await requireSession(["employee", "admin"]);
 
   return (
     <div className="space-y-6">

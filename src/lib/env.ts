@@ -18,6 +18,8 @@ export const env = {
   firebaseProjectIdServer: process.env.FIREBASE_PROJECT_ID,
   firebaseStorageBucketServer: process.env.FIREBASE_STORAGE_BUCKET,
   firebaseDatabaseUrl: process.env.FIREBASE_DATABASE_URL,
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
   sessionCookieName:
     process.env.FIREBASE_SESSION_COOKIE_NAME ?? "censussync_session",
   demoSessionCookieName:

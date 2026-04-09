@@ -6,6 +6,16 @@ import { getAdminAuth, getAdminDb, getAdminStorage } from "@/lib/firebase/admin"
 import { sanitizeStorageName } from "@/lib/missions/utils";
 import { mutateReviewStore, readReviewStore } from "@/lib/review-store/server";
 import { getServerRuntimeMode } from "@/lib/server/runtime";
+import {
+  buildAlerts,
+  buildCoverageGaps,
+  buildCoverageTargets,
+  buildEnumeratorScorecards,
+  buildReviewCase,
+  deriveSubmissionStatuses,
+  evaluateHouseholdRisk,
+  evaluateMissionRisk
+} from "@/lib/trust/engine";
 import type { AuthSession } from "@/types/session";
 import type {
   Assignment,
@@ -17,6 +27,9 @@ import type {
   MissionSubmission,
   Project,
   ProjectType,
+  ReviewCase,
+  ReviewCaseStatus,
+  RevisitReason,
   Scope,
   SubmissionReviewStatus,
   SubmissionSyncStatus,
@@ -35,6 +48,9 @@ export interface ExportRow {
   syncStatus: string;
   validationStatus: string;
   reviewStatus: string;
+  riskLevel?: string;
+  riskScore?: number;
+  visitOutcome?: string;
   capturedAt: string;
 }
 
@@ -81,8 +97,8 @@ function assertAdmin(session: AuthSession) {
 }
 
 function assertSupervisorOrAdmin(session: AuthSession) {
-  if (!["supervisor", "admin"].includes(session.role)) {
-    throw new Error("Supervisor or admin access is required.");
+  if (session.role !== "admin") {
+    throw new Error("Admin access is required.");
   }
 }
 
@@ -91,7 +107,7 @@ function canAccessSubmission(session: AuthSession, submission: HouseholdSubmissi
     return true;
   }
 
-  if (session.role === "enumerator") {
+  if (session.role === "employee") {
     return submission.enumeratorId === session.uid;
   }
 
@@ -121,35 +137,47 @@ function buildAuditLog(
   };
 }
 
-function determineSubmissionOutcome(
-  submission: HouseholdSubmission,
-  existing: HouseholdSubmission[]
-) {
-  const duplicate = existing.some(
-    (candidate) =>
-      candidate.submissionId !== submission.submissionId &&
-      candidate.projectId === submission.projectId &&
-      (candidate.dedupeKey === submission.dedupeKey ||
-        candidate.householdId === submission.householdId)
-  );
+function buildGeneratedAlerts(params: {
+  submissions: HouseholdSubmission[];
+  missionSubmissions: MissionSubmission[];
+  reviewCases: ReviewCase[];
+  assignments: Assignment[];
+}) {
+  return buildAlerts({
+    reviewCases: params.reviewCases,
+    gaps: buildCoverageGaps(
+      params.submissions,
+      params.reviewCases,
+      buildCoverageTargets(params.assignments)
+    ),
+    scorecards: buildEnumeratorScorecards(
+      params.submissions,
+      params.missionSubmissions,
+      params.reviewCases
+    ),
+    missionSubmissions: params.missionSubmissions
+  });
+}
 
-  if (duplicate) {
-    return {
-      syncStatus: "flagged" as SubmissionSyncStatus,
-      validationStatus: "flagged" as SubmissionValidationStatus,
-      reviewStatus: "pending_review" as SubmissionReviewStatus,
-      validationMessage: "Possible duplicate household in the same project scope.",
-      flags: Array.from(new Set([...(submission.flags ?? []), "duplicate_household"]))
-    };
+function resolveReviewCaseId(submission: HouseholdSubmission | MissionSubmission) {
+  return submission.reviewCaseId ?? `review-${submission.revisionGroupId ?? submission.submissionId}`;
+}
+
+function buildSubmissionConflictMessage(reviewStatus: SubmissionReviewStatus) {
+  switch (reviewStatus) {
+    case "revisit_requested":
+      return "Revisit synced and waiting for supervisor review.";
+    case "under_review":
+      return "Resubmission synced and is currently under supervisor review.";
+    case "escalated":
+      return "Submission escalated for admin review.";
+    case "approved":
+      return "Supervisor approved the submission.";
+    case "rejected":
+      return "Submission rejected during supervisor review.";
+    default:
+      return "Submission needs supervisor review because of trust-risk signals.";
   }
-
-  return {
-    syncStatus: "synced" as SubmissionSyncStatus,
-    validationStatus: "approved" as SubmissionValidationStatus,
-    reviewStatus: "not_required" as SubmissionReviewStatus,
-    validationMessage: "Submission synced successfully.",
-    flags: submission.flags ?? []
-  };
 }
 
 function buildExportRows(submissions: HouseholdSubmission[]): ExportRow[] {
@@ -162,6 +190,9 @@ function buildExportRows(submissions: HouseholdSubmission[]): ExportRow[] {
     syncStatus: submission.syncStatus,
     validationStatus: submission.validationStatus,
     reviewStatus: submission.reviewStatus,
+    riskLevel: submission.riskLevel,
+    riskScore: submission.riskScore,
+    visitOutcome: submission.visitOutcome,
     capturedAt: submission.capturedAt
   }));
 }
@@ -293,9 +324,9 @@ export async function upsertManagedUser(
           projectId: payload.projectId,
           projectType: pickProjectType(project?.type),
           templateVersionId: project?.activeTemplateVersionId,
-          enumeratorId: payload.role === "enumerator" ? uid : undefined,
-          assigneeUid: payload.role === "enumerator" ? uid : undefined,
-          supervisorId: payload.role === "supervisor" ? uid : undefined,
+          enumeratorId: payload.role === "employee" ? uid : undefined,
+          assigneeUid: payload.role === "employee" ? uid : undefined,
+          supervisorId: undefined,
           scope: normalizedScopes[0]!,
           label:
             payload.assignmentLabel ??
@@ -393,9 +424,9 @@ export async function upsertManagedUser(
         projectId: payload.projectId,
         projectType: pickProjectType(project?.type),
         templateVersionId: project?.activeTemplateVersionId ?? null,
-        enumeratorId: payload.role === "enumerator" ? uid : null,
-        assigneeUid: payload.role === "enumerator" ? uid : null,
-        supervisorId: payload.role === "supervisor" ? uid : null,
+        enumeratorId: payload.role === "employee" ? uid : null,
+        assigneeUid: payload.role === "employee" ? uid : null,
+        supervisorId: null,
         scope: normalizedScopes[0],
         label:
           payload.assignmentLabel ??
@@ -832,13 +863,65 @@ export async function calibrateManagedMissionLocation(
 export async function reviewManagedSubmission(
   payload: {
     submissionId: string;
-    action: "resolved" | "escalated";
+    action:
+      | "resolved"
+      | "under_review"
+      | "revisit_requested"
+      | "approved"
+      | "rejected"
+      | "escalated";
     reviewNotes?: string;
+    revisitReasons?: RevisitReason[];
   },
   session: AuthSession
 ) {
   assertSupervisorOrAdmin(session);
-  const resolved = payload.action === "resolved";
+  const action = payload.action === "resolved" ? "approved" : payload.action;
+
+  function nextSubmissionState(current: HouseholdSubmission) {
+    if (action === "approved") {
+      return {
+        validationStatus: "approved" as SubmissionValidationStatus,
+        syncStatus: "synced" as SubmissionSyncStatus,
+        reviewStatus: "approved" as SubmissionReviewStatus,
+        validationMessage: "Supervisor approved the submission."
+      };
+    }
+
+    if (action === "rejected") {
+      return {
+        validationStatus: "rejected" as SubmissionValidationStatus,
+        syncStatus: "flagged" as SubmissionSyncStatus,
+        reviewStatus: "rejected" as SubmissionReviewStatus,
+        validationMessage: "Supervisor rejected the submission."
+      };
+    }
+
+    if (action === "revisit_requested") {
+      return {
+        validationStatus: current.validationStatus,
+        syncStatus: "flagged" as SubmissionSyncStatus,
+        reviewStatus: "revisit_requested" as SubmissionReviewStatus,
+        validationMessage: "Supervisor requested a field revisit."
+      };
+    }
+
+    if (action === "under_review") {
+      return {
+        validationStatus: current.validationStatus,
+        syncStatus: "flagged" as SubmissionSyncStatus,
+        reviewStatus: "under_review" as SubmissionReviewStatus,
+        validationMessage: "Submission is now under supervisor review."
+      };
+    }
+
+    return {
+      validationStatus: current.validationStatus,
+      syncStatus: "flagged" as SubmissionSyncStatus,
+      reviewStatus: "escalated" as SubmissionReviewStatus,
+      validationMessage: "Escalated to admin for further review."
+    };
+  }
 
   if (getServerRuntimeMode() === "review-safe") {
     return mutateReviewStore((draft) => {
@@ -854,29 +937,97 @@ export async function reviewManagedSubmission(
         throw new Error("This submission is outside your assigned scope.");
       }
 
+      const state = nextSubmissionState(current);
+      const reviewCaseId = resolveReviewCaseId(current);
+      const existingReviewCaseIndex = draft.review_cases.findIndex(
+        (entry) => entry.id === reviewCaseId || entry.currentSubmissionId === current.submissionId
+      );
+      const now = new Date().toISOString();
+
       draft.submissions[index] = {
         ...current,
-        validationStatus: resolved ? "approved" : current.validationStatus,
-        syncStatus: resolved ? "synced" : "flagged",
-        reviewStatus: resolved ? "resolved" : "escalated",
+        reviewCaseId,
+        validationStatus: state.validationStatus,
+        syncStatus: state.syncStatus,
+        reviewStatus: state.reviewStatus,
         reviewNotes: payload.reviewNotes,
         reviewedBy: session.uid,
         reviewedByName: session.name,
-        reviewedAt: new Date().toISOString(),
-        validationMessage: resolved
-          ? "Supervisor resolved the validation issue."
-          : "Escalated to admin for further review.",
-        updatedAt: new Date().toISOString()
+        reviewedAt: now,
+        validationMessage: state.validationMessage,
+        updatedAt: now
       };
+
+      if (existingReviewCaseIndex >= 0) {
+        const reviewCase = draft.review_cases[existingReviewCaseIndex]!;
+        draft.review_cases[existingReviewCaseIndex] = {
+          ...reviewCase,
+          status: action as ReviewCaseStatus,
+          assignedReviewerId: session.uid,
+          assignedReviewerName: session.name,
+          latestActionAt: now,
+          updatedAt: now,
+          comments: payload.reviewNotes
+            ? [
+                ...reviewCase.comments,
+                {
+                  id: createId("review-comment"),
+                  actorId: session.uid,
+                  actorName: session.name,
+                  actorRole: session.role,
+                  message: payload.reviewNotes,
+                  createdAt: now
+                }
+              ]
+            : reviewCase.comments,
+          timeline: [
+            ...reviewCase.timeline,
+            {
+              id: createId("review-event"),
+              type:
+                action === "revisit_requested"
+                  ? "revisit_requested"
+                  : action === "approved" || action === "rejected"
+                    ? "resolved"
+                    : "status_changed",
+              actorId: session.uid,
+              actorName: session.name,
+              actorRole: session.role,
+              createdAt: now,
+              detail: payload.reviewNotes ?? `Review case marked as ${action.replaceAll("_", " ")}.`
+            }
+          ],
+          revisitTask:
+            action === "revisit_requested"
+              ? {
+                  id: reviewCase.revisitTask?.id ?? createId("revisit"),
+                  submissionId: current.submissionId,
+                  reviewCaseId,
+                  enumeratorId: current.enumeratorId,
+                  reasons: payload.revisitReasons ?? ["missing_fields"],
+                  status: "open",
+                  requestedAt: now,
+                  requestedBy: session.uid,
+                  requestedByName: session.name,
+                  notes: payload.reviewNotes
+                }
+              : reviewCase.revisitTask
+                ? {
+                    ...reviewCase.revisitTask,
+                    status: action === "approved" ? "completed" : reviewCase.revisitTask.status
+                  }
+                : undefined
+        };
+      }
 
       draft.audit_logs.push(
         buildAuditLog(
           session,
-          resolved ? "resolved_submission_review" : "escalated_submission_review",
+          `${action}_submission_review`,
           "submission",
           payload.submissionId,
           current.scope,
-          { reviewStatus: resolved ? "resolved" : "escalated" }
+          { reviewStatus: action }
         )
       );
 
@@ -900,30 +1051,99 @@ export async function reviewManagedSubmission(
     throw new Error("This submission is outside your assigned scope.");
   }
 
+  const state = nextSubmissionState(submission);
+  const reviewCaseId = resolveReviewCaseId(submission);
+  const now = new Date().toISOString();
+
   await submissionRef.set(
     {
-      validationStatus: resolved ? "approved" : submission.validationStatus,
-      syncStatus: resolved ? "synced" : "flagged",
-      reviewStatus: resolved ? "resolved" : "escalated",
+      reviewCaseId,
+      validationStatus: state.validationStatus,
+      syncStatus: state.syncStatus,
+      reviewStatus: state.reviewStatus,
       reviewNotes: payload.reviewNotes ?? null,
       reviewedBy: session.uid,
       reviewedByName: session.name,
-      reviewedAt: new Date().toISOString(),
-      validationMessage: resolved
-        ? "Supervisor resolved the validation issue."
-        : "Escalated to admin for further review.",
-      updatedAt: new Date().toISOString()
+      reviewedAt: now,
+      validationMessage: state.validationMessage,
+      updatedAt: now
     },
     { merge: true }
   );
 
+  const reviewCaseRef = db.collection("review_cases").doc(reviewCaseId);
+  const reviewCaseSnapshot = await reviewCaseRef.get();
+  if (reviewCaseSnapshot.exists) {
+    const reviewCase = reviewCaseSnapshot.data() as ReviewCase;
+    await reviewCaseRef.set(
+      {
+        status: action,
+        assignedReviewerId: session.uid,
+        assignedReviewerName: session.name,
+        latestActionAt: now,
+        updatedAt: now,
+        comments: payload.reviewNotes
+          ? [
+              ...(reviewCase.comments ?? []),
+              {
+                id: createId("review-comment"),
+                actorId: session.uid,
+                actorName: session.name,
+                actorRole: session.role,
+                message: payload.reviewNotes,
+                createdAt: now
+              }
+            ]
+          : reviewCase.comments ?? [],
+        timeline: [
+          ...(reviewCase.timeline ?? []),
+          {
+            id: createId("review-event"),
+            type:
+              action === "revisit_requested"
+                ? "revisit_requested"
+                : action === "approved" || action === "rejected"
+                  ? "resolved"
+                  : "status_changed",
+            actorId: session.uid,
+            actorName: session.name,
+            actorRole: session.role,
+            createdAt: now,
+            detail: payload.reviewNotes ?? `Review case marked as ${action.replaceAll("_", " ")}.`
+          }
+        ],
+        revisitTask:
+          action === "revisit_requested"
+            ? {
+                id: reviewCase.revisitTask?.id ?? createId("revisit"),
+                submissionId: submission.submissionId,
+                reviewCaseId,
+                enumeratorId: submission.enumeratorId,
+                reasons: payload.revisitReasons ?? ["missing_fields"],
+                status: "open",
+                requestedAt: now,
+                requestedBy: session.uid,
+                requestedByName: session.name,
+                notes: payload.reviewNotes
+              }
+            : reviewCase.revisitTask
+              ? {
+                  ...reviewCase.revisitTask,
+                  status: action === "approved" ? "completed" : reviewCase.revisitTask.status
+                }
+              : null
+      },
+      { merge: true }
+    );
+  }
+
   await appendLiveAuditLog(
     session,
-    resolved ? "resolved_submission_review" : "escalated_submission_review",
+    `${action}_submission_review`,
     "submission",
     payload.submissionId,
     submission.scope,
-    { reviewStatus: resolved ? "resolved" : "escalated" }
+    { reviewStatus: action }
   );
 
   return { ok: true };
@@ -932,6 +1152,13 @@ export async function reviewManagedSubmission(
 export async function createManagedExport(
   payload: {
     format: ExportFormat;
+    packType?:
+      | "district_summary"
+      | "enumerator_productivity"
+      | "anomaly_report"
+      | "pending_review"
+      | "revisit_backlog"
+      | "coverage_completion";
     projectId?: string;
     filters?: {
       status?: string;
@@ -956,6 +1183,7 @@ export async function createManagedExport(
         requesterName: session.name,
         scope: session.role === "admin" ? [{ district: "All Districts", block: "All Blocks" }] : session.scopes,
         format: payload.format,
+        packType: payload.packType,
         status: "completed",
         createdAt: new Date().toISOString(),
         filters: {
@@ -997,6 +1225,7 @@ export async function createManagedExport(
     requesterName: session.name,
     scope: session.role === "admin" ? [{ district: "All Districts", block: "All Blocks" }] : session.scopes,
     format: payload.format,
+    packType: payload.packType ?? null,
     status: "completed",
     createdAt: new Date().toISOString(),
     filters: {
@@ -1022,7 +1251,7 @@ export async function ingestManagedSubmission(
   payload: { submission: HouseholdSubmission },
   session: AuthSession
 ) {
-  if (session.role !== "enumerator" && session.role !== "admin") {
+  if (session.role !== "employee" && session.role !== "admin") {
     throw new Error("Only enumerators can sync household submissions.");
   }
 
@@ -1030,14 +1259,44 @@ export async function ingestManagedSubmission(
 
   if (getServerRuntimeMode() === "review-safe") {
     return mutateReviewStore((draft) => {
-      const outcome = determineSubmissionOutcome(payload.submission, draft.submissions);
+      const risk = evaluateHouseholdRisk(payload.submission, draft.submissions);
+      const revisitSync =
+        Boolean(payload.submission.revisitOfSubmissionId) || Boolean(payload.submission.reviewCaseId);
+      const outcome = revisitSync
+        ? {
+            validationStatus: "flagged" as SubmissionValidationStatus,
+            reviewStatus: "under_review" as SubmissionReviewStatus,
+            syncStatus: "flagged" as SubmissionSyncStatus,
+            validationMessage: buildSubmissionConflictMessage("under_review")
+          }
+        : deriveSubmissionStatuses({
+            visitOutcome: payload.submission.visitOutcome,
+            riskLevel: risk.riskLevel,
+            hasDuplicates: risk.duplicateCandidates.some(
+              (candidate) => candidate.confidence === "high" || candidate.confidence === "medium"
+            )
+          });
+      const reviewCaseId =
+        outcome.reviewStatus === "not_required"
+          ? undefined
+          : resolveReviewCaseId(payload.submission);
       const syncedSubmission: HouseholdSubmission = {
         ...payload.submission,
+        reviewCaseId,
         syncStatus: outcome.syncStatus,
         validationStatus: outcome.validationStatus,
         reviewStatus: outcome.reviewStatus,
         validationMessage: outcome.validationMessage,
-        flags: outcome.flags,
+        flags: Array.from(
+          new Set([
+            ...(payload.submission.flags ?? []),
+            ...risk.riskSignals,
+            ...risk.duplicateCandidates.flatMap((candidate) => candidate.reasons)
+          ])
+        ),
+        riskScore: risk.riskScore,
+        riskLevel: risk.riskLevel,
+        riskSignals: risk.riskSignals,
         updatedAt: submittedAt
       };
       const index = draft.submissions.findIndex(
@@ -1048,6 +1307,74 @@ export async function ingestManagedSubmission(
       } else {
         draft.submissions.push(syncedSubmission);
       }
+
+      if (reviewCaseId) {
+        const reviewCaseIndex = draft.review_cases.findIndex(
+          (entry) =>
+            entry.id === reviewCaseId ||
+            entry.currentSubmissionId === payload.submission.revisitOfSubmissionId
+        );
+        const nextReviewCase = buildReviewCase({
+          submissionId: payload.submission.revisitOfSubmissionId ?? syncedSubmission.submissionId,
+          currentSubmissionId: syncedSubmission.submissionId,
+          projectId: syncedSubmission.projectId,
+          scope: syncedSubmission.scope,
+          enumeratorId: syncedSubmission.enumeratorId,
+          householdId: syncedSubmission.householdId,
+          riskLevel: risk.riskLevel,
+          riskScore: risk.riskScore,
+          riskSignals: risk.riskSignals,
+          duplicateCandidates: risk.duplicateCandidates,
+          actorId: session.uid,
+          actorName: session.name,
+          actorRole: session.role === "employee" ? "enumerator" : "admin",
+          notes: syncedSubmission.validationMessage
+        });
+
+        if (reviewCaseIndex >= 0) {
+          const existingReviewCase = draft.review_cases[reviewCaseIndex]!;
+          draft.review_cases[reviewCaseIndex] = {
+            ...existingReviewCase,
+            currentSubmissionId: syncedSubmission.submissionId,
+            riskLevel: risk.riskLevel,
+            riskScore: risk.riskScore,
+            riskSignals: risk.riskSignals,
+            duplicateCandidates: risk.duplicateCandidates,
+            status:
+              outcome.reviewStatus === "under_review"
+                ? "under_review"
+                : existingReviewCase.status,
+            latestActionAt: submittedAt,
+            updatedAt: submittedAt,
+            timeline: [
+              ...existingReviewCase.timeline,
+              {
+                id: createId("review-event"),
+                type: "status_changed",
+                actorId: session.uid,
+                actorName: session.name,
+                actorRole: session.role,
+                createdAt: submittedAt,
+                detail: revisitSync
+                  ? "Enumerator submitted revisit evidence for supervisor review."
+                  : syncedSubmission.validationMessage ?? "Submission flagged for review."
+              }
+            ]
+          };
+        } else {
+          draft.review_cases.push(nextReviewCase);
+        }
+      }
+
+      draft.alerts = [
+        ...draft.alerts.filter((alert) => alert.relatedEntityId !== reviewCaseId),
+        ...buildGeneratedAlerts({
+          submissions: draft.submissions,
+          missionSubmissions: draft.mission_submissions,
+          reviewCases: draft.review_cases,
+          assignments: draft.assignments
+        })
+      ];
       draft.audit_logs.push(
         buildAuditLog(session, "synced_submission", "submission", syncedSubmission.submissionId, syncedSubmission.scope, {
           validationStatus: syncedSubmission.validationStatus
@@ -1070,18 +1397,122 @@ export async function ingestManagedSubmission(
     .where("projectId", "==", payload.submission.projectId)
     .get();
   const existing = existingSnapshot.docs.map((doc) => doc.data() as HouseholdSubmission);
-  const outcome = determineSubmissionOutcome(payload.submission, existing);
+  const risk = evaluateHouseholdRisk(payload.submission, existing);
+  const revisitSync =
+    Boolean(payload.submission.revisitOfSubmissionId) || Boolean(payload.submission.reviewCaseId);
+  const outcome = revisitSync
+    ? {
+        validationStatus: "flagged" as SubmissionValidationStatus,
+        reviewStatus: "under_review" as SubmissionReviewStatus,
+        syncStatus: "flagged" as SubmissionSyncStatus,
+        validationMessage: buildSubmissionConflictMessage("under_review")
+      }
+    : deriveSubmissionStatuses({
+        visitOutcome: payload.submission.visitOutcome,
+        riskLevel: risk.riskLevel,
+        hasDuplicates: risk.duplicateCandidates.some(
+          (candidate) => candidate.confidence === "high" || candidate.confidence === "medium"
+        )
+      });
+  const reviewCaseId =
+    outcome.reviewStatus === "not_required"
+      ? undefined
+      : resolveReviewCaseId(payload.submission);
   const syncedSubmission: HouseholdSubmission = {
     ...payload.submission,
+    reviewCaseId,
     syncStatus: outcome.syncStatus,
     validationStatus: outcome.validationStatus,
     reviewStatus: outcome.reviewStatus,
     validationMessage: outcome.validationMessage,
-    flags: outcome.flags,
+    flags: Array.from(
+      new Set([
+        ...(payload.submission.flags ?? []),
+        ...risk.riskSignals,
+        ...risk.duplicateCandidates.flatMap((candidate) => candidate.reasons)
+      ])
+    ),
+    riskScore: risk.riskScore,
+    riskLevel: risk.riskLevel,
+    riskSignals: risk.riskSignals,
     updatedAt: submittedAt
   };
 
   await db.collection("submissions").doc(syncedSubmission.submissionId).set(syncedSubmission);
+
+  if (reviewCaseId) {
+    const reviewCaseRef = db.collection("review_cases").doc(reviewCaseId);
+    const reviewCaseSnapshot = await reviewCaseRef.get();
+    if (reviewCaseSnapshot.exists) {
+      const current = reviewCaseSnapshot.data() as ReviewCase;
+      await reviewCaseRef.set(
+        {
+          currentSubmissionId: syncedSubmission.submissionId,
+          riskLevel: risk.riskLevel,
+          riskScore: risk.riskScore,
+          riskSignals: risk.riskSignals,
+          duplicateCandidates: risk.duplicateCandidates,
+          status: revisitSync ? "under_review" : current.status,
+          latestActionAt: submittedAt,
+          updatedAt: submittedAt,
+          timeline: [
+            ...(current.timeline ?? []),
+            {
+              id: createId("review-event"),
+              type: "status_changed",
+              actorId: session.uid,
+              actorName: session.name,
+              actorRole: session.role,
+              createdAt: submittedAt,
+              detail: revisitSync
+                ? "Enumerator submitted revisit evidence for supervisor review."
+                : syncedSubmission.validationMessage ?? "Submission flagged for review."
+            }
+          ]
+        },
+        { merge: true }
+      );
+    } else {
+      await reviewCaseRef.set(
+        buildReviewCase({
+          submissionId: payload.submission.revisitOfSubmissionId ?? syncedSubmission.submissionId,
+          currentSubmissionId: syncedSubmission.submissionId,
+          projectId: syncedSubmission.projectId,
+          scope: syncedSubmission.scope,
+          enumeratorId: syncedSubmission.enumeratorId,
+          householdId: syncedSubmission.householdId,
+          riskLevel: risk.riskLevel,
+          riskScore: risk.riskScore,
+          riskSignals: risk.riskSignals,
+          duplicateCandidates: risk.duplicateCandidates,
+          actorId: session.uid,
+          actorName: session.name,
+          actorRole: session.role === "employee" ? "enumerator" : "admin",
+          notes: syncedSubmission.validationMessage
+        })
+      );
+    }
+  }
+
+  const [liveSubmissionsSnapshot, liveMissionSnapshot, liveAssignmentsSnapshot, liveReviewCasesSnapshot] =
+    await Promise.all([
+      db.collection("submissions").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("mission_submissions").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("assignments").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("review_cases").where("projectId", "==", payload.submission.projectId).get()
+    ]);
+  const generatedAlerts = buildGeneratedAlerts({
+    submissions: liveSubmissionsSnapshot.docs.map((doc) => doc.data() as HouseholdSubmission),
+    missionSubmissions: liveMissionSnapshot.docs.map((doc) => doc.data() as MissionSubmission),
+    reviewCases: liveReviewCasesSnapshot.docs.map((doc) => doc.data() as ReviewCase),
+    assignments: liveAssignmentsSnapshot.docs.map((doc) => doc.data() as Assignment)
+  });
+  const alertBatch = db.batch();
+  generatedAlerts.forEach((alert) => {
+    alertBatch.set(db.collection("alerts").doc(alert.id), alert, { merge: true });
+  });
+  await alertBatch.commit();
+
   await appendLiveAuditLog(
     session,
     "synced_submission",
@@ -1101,7 +1532,7 @@ export async function ingestManagedMissionSubmission(
   payload: { submission: MissionSubmission; proofFile?: File | null },
   session: AuthSession
 ) {
-  if (session.role !== "enumerator" && session.role !== "admin") {
+  if (session.role !== "employee" && session.role !== "admin") {
     throw new Error("Only enumerators can sync mission submissions.");
   }
 
@@ -1109,11 +1540,34 @@ export async function ingestManagedMissionSubmission(
 
   if (getServerRuntimeMode() === "review-safe") {
     return mutateReviewStore((draft) => {
+      const risk = evaluateMissionRisk(payload.submission, draft.mission_submissions);
+      const outcome = deriveSubmissionStatuses({
+        visitOutcome: payload.submission.visitOutcome,
+        riskLevel: risk.riskLevel,
+        hasDuplicates: risk.duplicateCandidates.some(
+          (candidate) => candidate.confidence === "high" || candidate.confidence === "medium"
+        )
+      });
+      const reviewCaseId =
+        outcome.reviewStatus === "not_required"
+          ? undefined
+          : resolveReviewCaseId(payload.submission);
       const syncedSubmission: MissionSubmission = {
         ...payload.submission,
-        syncStatus: "synced",
-        validationStatus: "approved",
-        validationMessage: "Mission synced successfully.",
+        reviewCaseId,
+        syncStatus: outcome.syncStatus,
+        validationStatus: outcome.validationStatus,
+        validationMessage: outcome.validationMessage,
+        riskScore: risk.riskScore,
+        riskLevel: risk.riskLevel,
+        riskSignals: risk.riskSignals,
+        anomalyFlags: Array.from(
+          new Set([
+            ...payload.submission.anomalyFlags,
+            ...risk.riskSignals,
+            ...risk.duplicateCandidates.flatMap((candidate) => candidate.reasons)
+          ])
+        ),
         evidence: {
           ...payload.submission.evidence,
           storagePath:
@@ -1136,6 +1590,40 @@ export async function ingestManagedMissionSubmission(
         draft.mission_submissions.push(syncedSubmission);
       }
 
+      if (reviewCaseId) {
+        const reviewCaseIndex = draft.review_cases.findIndex((entry) => entry.id === reviewCaseId);
+        const nextReviewCase = buildReviewCase({
+          submissionId: syncedSubmission.submissionId,
+          currentSubmissionId: syncedSubmission.submissionId,
+          projectId: syncedSubmission.projectId,
+          scope: syncedSubmission.scope,
+          enumeratorId: syncedSubmission.enumeratorId,
+          missionAssignmentId: syncedSubmission.assignmentId,
+          riskLevel: risk.riskLevel,
+          riskScore: risk.riskScore,
+          riskSignals: risk.riskSignals,
+          duplicateCandidates: risk.duplicateCandidates,
+          actorId: session.uid,
+          actorName: session.name,
+          actorRole: session.role === "employee" ? "enumerator" : "admin",
+          notes: syncedSubmission.validationMessage
+        });
+        if (reviewCaseIndex >= 0) {
+          draft.review_cases[reviewCaseIndex] = {
+            ...draft.review_cases[reviewCaseIndex]!,
+            currentSubmissionId: syncedSubmission.submissionId,
+            latestActionAt: synchronizedAt,
+            updatedAt: synchronizedAt,
+            riskLevel: risk.riskLevel,
+            riskScore: risk.riskScore,
+            riskSignals: risk.riskSignals,
+            duplicateCandidates: risk.duplicateCandidates
+          };
+        } else {
+          draft.review_cases.push(nextReviewCase);
+        }
+      }
+
       draft.assignments = draft.assignments.map((assignment) =>
         assignment.id === syncedSubmission.assignmentId
           ? {
@@ -1151,6 +1639,16 @@ export async function ingestManagedMissionSubmission(
             }
           : assignment
       );
+
+      draft.alerts = [
+        ...draft.alerts.filter((alert) => alert.projectId !== syncedSubmission.projectId),
+        ...buildGeneratedAlerts({
+          submissions: draft.submissions,
+          missionSubmissions: draft.mission_submissions,
+          reviewCases: draft.review_cases,
+          assignments: draft.assignments
+        })
+      ];
 
       draft.audit_logs.push(
         buildAuditLog(
@@ -1194,11 +1692,41 @@ export async function ingestManagedMissionSubmission(
     };
   }
 
+  const existingMissionSnapshot = await db
+    .collection("mission_submissions")
+    .where("projectId", "==", payload.submission.projectId)
+    .get();
+  const existingMissionSubmissions = existingMissionSnapshot.docs.map(
+    (doc) => doc.data() as MissionSubmission
+  );
+  const missionRisk = evaluateMissionRisk(payload.submission, existingMissionSubmissions);
+  const missionOutcome = deriveSubmissionStatuses({
+    visitOutcome: payload.submission.visitOutcome,
+    riskLevel: missionRisk.riskLevel,
+    hasDuplicates: missionRisk.duplicateCandidates.some(
+      (candidate) => candidate.confidence === "high" || candidate.confidence === "medium"
+    )
+  });
+
   const syncedSubmission: MissionSubmission = {
     ...payload.submission,
-    syncStatus: "synced",
-    validationStatus: "approved",
-    validationMessage: "Mission synced successfully.",
+    reviewCaseId:
+      missionOutcome.reviewStatus === "not_required"
+        ? undefined
+        : resolveReviewCaseId(payload.submission),
+    syncStatus: missionOutcome.syncStatus,
+    validationStatus: missionOutcome.validationStatus,
+    validationMessage: missionOutcome.validationMessage,
+    riskScore: missionRisk.riskScore,
+    riskLevel: missionRisk.riskLevel,
+    riskSignals: missionRisk.riskSignals,
+    anomalyFlags: Array.from(
+      new Set([
+        ...payload.submission.anomalyFlags,
+        ...missionRisk.riskSignals,
+        ...missionRisk.duplicateCandidates.flatMap((candidate) => candidate.reasons)
+      ])
+    ),
     evidence,
     updatedAt: synchronizedAt
   };
@@ -1220,6 +1748,47 @@ export async function ingestManagedMissionSubmission(
     },
     { merge: true }
   );
+
+  if (syncedSubmission.reviewCaseId) {
+    await db.collection("review_cases").doc(syncedSubmission.reviewCaseId).set(
+      buildReviewCase({
+        submissionId: syncedSubmission.submissionId,
+        currentSubmissionId: syncedSubmission.submissionId,
+        projectId: syncedSubmission.projectId,
+        scope: syncedSubmission.scope,
+        enumeratorId: syncedSubmission.enumeratorId,
+        missionAssignmentId: syncedSubmission.assignmentId,
+        riskLevel: syncedSubmission.riskLevel ?? "low",
+        riskScore: syncedSubmission.riskScore ?? 0,
+        riskSignals: syncedSubmission.riskSignals ?? [],
+        duplicateCandidates: [],
+        actorId: session.uid,
+        actorName: session.name,
+        actorRole: session.role === "employee" ? "enumerator" : "admin",
+        notes: syncedSubmission.validationMessage
+      }),
+      { merge: true }
+    );
+  }
+
+  const [liveSubmissionsSnapshot, liveMissionSnapshot, liveAssignmentsSnapshot, liveReviewCasesSnapshot] =
+    await Promise.all([
+      db.collection("submissions").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("mission_submissions").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("assignments").where("projectId", "==", payload.submission.projectId).get(),
+      db.collection("review_cases").where("projectId", "==", payload.submission.projectId).get()
+    ]);
+  const generatedAlerts = buildGeneratedAlerts({
+    submissions: liveSubmissionsSnapshot.docs.map((doc) => doc.data() as HouseholdSubmission),
+    missionSubmissions: liveMissionSnapshot.docs.map((doc) => doc.data() as MissionSubmission),
+    reviewCases: liveReviewCasesSnapshot.docs.map((doc) => doc.data() as ReviewCase),
+    assignments: liveAssignmentsSnapshot.docs.map((doc) => doc.data() as Assignment)
+  });
+  const alertBatch = db.batch();
+  generatedAlerts.forEach((alert) => {
+    alertBatch.set(db.collection("alerts").doc(alert.id), alert, { merge: true });
+  });
+  await alertBatch.commit();
 
   await appendLiveAuditLog(
     session,

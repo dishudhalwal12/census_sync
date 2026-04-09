@@ -30,7 +30,7 @@ export function DraftsQueueClient({ session }: { session: AuthSession }) {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="font-semibold">{draft.householdId || "Untitled household draft"}</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm text-muted-foreground" suppressHydrationWarning>
                         Updated {new Date(draft.updatedAt).toLocaleString()}
                       </p>
                     </div>

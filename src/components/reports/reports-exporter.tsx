@@ -31,6 +31,7 @@ export function ReportsExporter({
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState("all");
   const [projectId, setProjectId] = useState("all");
+  const [packType, setPackType] = useState("district_summary");
 
   const filteredSubmissions = useMemo(
     () =>
@@ -53,6 +54,7 @@ export function ReportsExporter({
       },
       body: JSON.stringify({
         format,
+        packType,
         projectId: projectId === "all" ? undefined : projectId,
         filters: {
           status: statusFilter === "all" ? undefined : statusFilter
@@ -70,6 +72,9 @@ export function ReportsExporter({
         syncStatus: string;
         validationStatus: string;
         reviewStatus: string;
+        riskLevel?: string;
+        riskScore?: number;
+        visitOutcome?: string;
         capturedAt: string;
       }>;
     };
@@ -145,6 +150,18 @@ export function ReportsExporter({
             ))}
           </select>
           <select
+            value={packType}
+            onChange={(event) => setPackType(event.target.value)}
+            className="h-11 w-full rounded-2xl border border-white/70 bg-white px-4 text-sm"
+          >
+            <option value="district_summary">District summary pack</option>
+            <option value="enumerator_productivity">Enumerator productivity pack</option>
+            <option value="anomaly_report">Anomaly report pack</option>
+            <option value="pending_review">Pending review pack</option>
+            <option value="revisit_backlog">Revisit backlog pack</option>
+            <option value="coverage_completion">Coverage completion pack</option>
+          </select>
+          <select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
             className="h-11 w-full rounded-2xl border border-white/70 bg-white px-4 text-sm"
@@ -174,9 +191,14 @@ export function ReportsExporter({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-semibold uppercase">{item.format}</p>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-sm text-muted-foreground" suppressHydrationWarning>
                     Requested by {item.requesterName} on {new Date(item.createdAt).toLocaleDateString()}
                   </p>
+                  {item.packType ? (
+                    <p className="text-sm text-muted-foreground">
+                      Pack: {item.packType.replaceAll("_", " ")}
+                    </p>
+                  ) : null}
                 </div>
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                   {item.status}

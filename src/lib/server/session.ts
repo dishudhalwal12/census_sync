@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 
 import { env } from "@/lib/env";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { isRole } from "@/lib/roles";
+import { isRole, normalizeRole } from "@/lib/roles";
 import type { AuthSession } from "@/types/session";
-import type { UserProfile, UserRole } from "@/types/domain";
+import type { UserProfile, WorkspaceRole } from "@/types/domain";
 
 function decodeDemoSession(value: string | undefined): AuthSession | null {
   if (!value) {
@@ -61,14 +61,17 @@ export async function getSession(): Promise<AuthSession | null> {
   try {
     const decoded = await auth.verifySessionCookie(sessionCookie, true);
     const profile = await getUserProfile(decoded.uid);
-    const resolvedRole = profile?.role ?? (isRole(String(decoded.role)) ? decoded.role : null);
+    const resolvedRole = normalizeRole(profile?.role ?? decoded.role);
 
-    if (!profile || !resolvedRole) {
+    if (!profile) {
       return null;
     }
 
     return {
       uid: decoded.uid,
+      orgId:
+        profile.orgId ??
+        (typeof decoded.orgId === "string" ? decoded.orgId : "org-demo-censussync"),
       email: decoded.email ?? profile.email ?? "",
       name: profile.name ?? decoded.name ?? decoded.email?.split("@")[0] ?? "CensusSync User",
       role: resolvedRole,
@@ -82,7 +85,7 @@ export async function getSession(): Promise<AuthSession | null> {
   }
 }
 
-export async function requireSession(allowedRoles?: UserRole[]) {
+export async function requireSession(allowedRoles?: WorkspaceRole[]) {
   const session = await getSession();
 
   if (!session) {

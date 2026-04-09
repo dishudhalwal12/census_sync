@@ -7,25 +7,21 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { Project, UserProfile } from "@/types/domain";
+import type { UserProfile } from "@/types/domain";
 
 export function UserManagementClient({
-  users,
-  projects
+  users
 }: {
   users: UserProfile[];
-  projects: Project[];
 }) {
   const router = useRouter();
   const [rows, setRows] = useState(users);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("enumerator");
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [district, setDistrict] = useState(projects[0]?.scope[0]?.district ?? "");
-  const [block, setBlock] = useState(projects[0]?.scope[0]?.block ?? "");
-  const [targetCount, setTargetCount] = useState("0");
+  const [role, setRole] = useState<"employee" | "admin">("employee");
+  const [district, setDistrict] = useState("");
+  const [block, setBlock] = useState("");
 
   useEffect(() => {
     setRows(users);
@@ -48,8 +44,6 @@ export function UserManagementClient({
           email,
           password,
           role,
-          projectId: projectId || null,
-          targetCount: Number(targetCount || "0"),
           scopes: district && block ? [{ district, block }] : []
         })
       });
@@ -62,29 +56,26 @@ export function UserManagementClient({
       setName("");
       setEmail("");
       setPassword("");
-      setRole("enumerator");
-      setTargetCount("0");
+      setRole("employee");
       const createdUid = payload.uid;
       if (createdUid) {
         setRows((current) => [
           {
             uid: createdUid,
+            orgId: current[0]?.orgId ?? "org-demo-censussync",
             name,
             email,
             role: role as UserProfile["role"],
-            status: "active",
-            projectId: projectId || undefined,
-            assignmentLabel: undefined,
+            status: "invited",
+            assignmentLabel: role === "admin" ? "Organization admin" : "Field employee",
             scopes: district && block ? [{ district, block }] : [],
-            assignedTemplateVersion:
-              projects.find((project) => project.id === projectId)?.activeTemplateVersionId ??
-              "template-unassigned",
+            assignedTemplateVersion: "template-unassigned",
             createdAt: new Date().toISOString()
           },
           ...current
         ]);
       }
-      toast.success("User created and assignment saved.");
+      toast.success("User invited successfully.");
       router.refresh();
     } catch (error) {
       toast.error(
@@ -108,40 +99,15 @@ export function UserManagementClient({
           />
           <select
             value={role}
-            onChange={(event) => setRole(event.target.value)}
+            onChange={(event) => setRole(event.target.value as "employee" | "admin")}
             className="h-11 rounded-2xl border border-white/70 bg-white px-4 text-sm"
           >
-            <option value="enumerator">Enumerator</option>
-            <option value="supervisor">Supervisor</option>
+            <option value="employee">Employee</option>
             <option value="admin">Admin</option>
-          </select>
-          <select
-            value={projectId}
-            onChange={(event) => {
-              const nextProjectId = event.target.value;
-              const project = projects.find((entry) => entry.id === nextProjectId);
-              setProjectId(nextProjectId);
-              setDistrict(project?.scope[0]?.district ?? "");
-              setBlock(project?.scope[0]?.block ?? "");
-            }}
-            className="h-11 rounded-2xl border border-white/70 bg-white px-4 text-sm"
-          >
-            <option value="">No project assigned yet</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
           </select>
           <Input placeholder="District" value={district} onChange={(event) => setDistrict(event.target.value)} />
           <Input placeholder="Block" value={block} onChange={(event) => setBlock(event.target.value)} />
-          <Input
-            placeholder="Target submissions"
-            type="number"
-            value={targetCount}
-            onChange={(event) => setTargetCount(event.target.value)}
-          />
-          <Button onClick={addUser}>Create assigned user</Button>
+          <Button onClick={addUser}>Invite workspace user</Button>
         </CardContent>
       </Card>
 
@@ -153,7 +119,7 @@ export function UserManagementClient({
                 <th className="pb-3">User</th>
                 <th className="pb-3">Role</th>
                 <th className="pb-3">Status</th>
-                <th className="pb-3">Project</th>
+                <th className="pb-3">Assignment</th>
                 <th className="pb-3">Scope</th>
               </tr>
             </thead>
@@ -166,9 +132,7 @@ export function UserManagementClient({
                   </td>
                   <td className="py-4 capitalize">{user.role}</td>
                   <td className="py-4 capitalize">{user.status}</td>
-                  <td className="py-4">
-                    {projects.find((project) => project.id === user.projectId)?.name ?? "Unassigned"}
-                  </td>
+                  <td className="py-4">{user.assignmentLabel ?? "Workspace user"}</td>
                   <td className="py-4">{user.scopes[0]?.district} / {user.scopes[0]?.block}</td>
                 </tr>
               ))}
