@@ -3,15 +3,12 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { getCampaignAdminWorkspace, getCampaignAnalytics } from "@/lib/campaigns/server";
+import { getAdminCampaignDashboard } from "@/lib/campaigns/server";
 import { requireSession } from "@/lib/server/session";
 
 export default async function AdminDashboardPage() {
   const session = await requireSession(["admin"]);
-  const [workspace, analytics] = await Promise.all([
-    getCampaignAdminWorkspace(session),
-    getCampaignAnalytics(session)
-  ]);
+  const { workspace, analytics } = await getAdminCampaignDashboard(session);
 
   return (
     <div className="space-y-6">

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { Timestamp } from "firebase-admin/firestore";
 
 import { env } from "@/lib/env";
@@ -38,6 +39,8 @@ import type {
   TemplateVersion,
   UserProfile
 } from "@/types/domain";
+
+const DEFAULT_ORG_ID = "org-demo-censussync";
 
 function serializeFirestoreValue(value: unknown): unknown {
   if (value instanceof Timestamp) {
@@ -90,7 +93,11 @@ function sortByDateDescending<T>(rows: T[]) {
   });
 }
 
-async function readCollection<T>(name: string) {
+function orgIdOf<T extends { orgId?: string }>(row: T) {
+  return row.orgId ?? DEFAULT_ORG_ID;
+}
+
+const readCollection = cache(async function readCollectionCached<T>(name: string) {
   const db = getAdminDb();
 
   if (!db) {
@@ -105,7 +112,28 @@ async function readCollection<T>(name: string) {
       ...doc.data()
     }) as T
   );
-}
+});
+
+const readOrgCollection = cache(async function readOrgCollectionCached<T extends { orgId?: string }>(
+  name: string,
+  orgId: string
+) {
+  const db = getAdminDb();
+
+  if (!db) {
+    const values = await readReviewCollection<T>(name as Parameters<typeof readReviewCollection>[0]);
+    return values.filter((value) => orgIdOf(value) === orgId);
+  }
+
+  const snapshot = await db.collection(name).where("orgId", "==", orgId).get();
+
+  return snapshot.docs.map((doc) =>
+    serializeFirestoreValue({
+      id: doc.id,
+      ...doc.data()
+    }) as T
+  );
+});
 
 function missionAssignmentMatches(assignment: Assignment) {
   return Boolean(assignment.shareCode || assignment.templateVersionId);
@@ -301,8 +329,14 @@ function computeAdminKpis(
 
 export async function getProjects(session?: AuthSession) {
   const [projects, assignments] = await Promise.all([
-    readCollection<Project>("projects"),
-    session?.role === "employee" ? readCollection<Assignment>("assignments") : Promise.resolve([])
+    session?.orgId
+      ? readOrgCollection<Project>("projects", session.orgId)
+      : readCollection<Project>("projects"),
+    session?.role === "employee"
+      ? session.orgId
+        ? readOrgCollection<Assignment>("assignments", session.orgId)
+        : readCollection<Assignment>("assignments")
+      : Promise.resolve([])
   ]);
 
   if (!session || session.role === "admin") {
@@ -333,7 +367,11 @@ export async function getProjects(session?: AuthSession) {
 export async function getTemplateVersions(session?: AuthSession) {
   const [templates, assignments] = await Promise.all([
     readCollection<TemplateVersion>("template_versions"),
-    session?.role === "employee" ? readCollection<Assignment>("assignments") : Promise.resolve([])
+    session?.role === "employee"
+      ? session.orgId
+        ? readOrgCollection<Assignment>("assignments", session.orgId)
+        : readCollection<Assignment>("assignments")
+      : Promise.resolve([])
   ]);
   const assignedProjectIds = new Set(
     assignments
@@ -381,7 +419,9 @@ export async function getCurrentTemplate(session?: AuthSession) {
 }
 
 export async function getAssignments(session?: AuthSession) {
-  const assignments = await readCollection<Assignment>("assignments");
+  const assignments = session?.orgId
+    ? await readOrgCollection<Assignment>("assignments", session.orgId)
+    : await readCollection<Assignment>("assignments");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(assignments);
@@ -407,7 +447,9 @@ export async function getAssignments(session?: AuthSession) {
 }
 
 export async function getSubmissions(session?: AuthSession) {
-  const submissions = await readCollection<HouseholdSubmission>("submissions");
+  const submissions = session?.orgId
+    ? await readOrgCollection<HouseholdSubmission>("submissions", session.orgId)
+    : await readCollection<HouseholdSubmission>("submissions");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(submissions);
@@ -432,7 +474,9 @@ export async function getSubmissions(session?: AuthSession) {
 }
 
 export async function getUsers(session?: AuthSession) {
-  const users = await readCollection<UserProfile>("users");
+  const users = session?.orgId
+    ? await readOrgCollection<UserProfile>("users", session.orgId)
+    : await readCollection<UserProfile>("users");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(users);
@@ -446,7 +490,9 @@ export async function getUsers(session?: AuthSession) {
 }
 
 export async function getAuditLogs(session?: AuthSession) {
-  const auditLogs = await readCollection<AuditLogEvent>("audit_logs");
+  const auditLogs = session?.orgId
+    ? await readOrgCollection<AuditLogEvent>("audit_logs", session.orgId)
+    : await readCollection<AuditLogEvent>("audit_logs");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(auditLogs);
@@ -458,7 +504,9 @@ export async function getAuditLogs(session?: AuthSession) {
 }
 
 export async function getExportRequests(session?: AuthSession) {
-  const exports = await readCollection<ExportRequest>("exports");
+  const exports = session?.orgId
+    ? await readOrgCollection<ExportRequest>("exports", session.orgId)
+    : await readCollection<ExportRequest>("exports");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(exports);
@@ -477,7 +525,9 @@ export async function getExportRequests(session?: AuthSession) {
 }
 
 export async function getReviewCases(session?: AuthSession) {
-  const reviewCases = await readCollection<ReviewCase>("review_cases");
+  const reviewCases = session?.orgId
+    ? await readOrgCollection<ReviewCase>("review_cases", session.orgId)
+    : await readCollection<ReviewCase>("review_cases");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(reviewCases);
@@ -618,7 +668,9 @@ export async function getCoveragePoints(session?: AuthSession) {
 }
 
 export async function getMissionSubmissions(session?: AuthSession) {
-  const submissions = await readCollection<MissionSubmission>("mission_submissions");
+  const submissions = session?.orgId
+    ? await readOrgCollection<MissionSubmission>("mission_submissions", session.orgId)
+    : await readCollection<MissionSubmission>("mission_submissions");
 
   if (!session || session.role === "admin") {
     return sortByDateDescending(submissions);

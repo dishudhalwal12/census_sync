@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { cache } from "react";
 import { Timestamp } from "firebase-admin/firestore";
 
 import { generateCampaignDraft } from "@/lib/campaigns/ai";
@@ -128,6 +129,31 @@ async function readCollection<T>(name: ReviewCollectionName) {
   );
 }
 
+const readCampaignCollection = cache(async function readCampaignCollectionCached<T>(
+  name: ReviewCollectionName
+) {
+  return readCollection<T>(name);
+});
+
+const readOrgCampaignCollection = cache(async function readOrgCampaignCollectionCached<
+  T extends { orgId?: string }
+>(name: ReviewCollectionName, orgId: string) {
+  const db = getAdminDb();
+
+  if (!db) {
+    const values = await readReviewCollection<T>(name);
+    return values.filter((value) => orgIdOf(value) === orgId);
+  }
+
+  const snapshot = await db.collection(name).where("orgId", "==", orgId).get();
+  return snapshot.docs.map((doc) =>
+    serializeFirestoreValue({
+      id: doc.id,
+      ...doc.data()
+    }) as T
+  );
+});
+
 async function upsertCollectionDocument<T extends { id: string }>(
   collection: string,
   value: T
@@ -175,32 +201,32 @@ async function upsertUserProfile(value: UserProfile) {
 }
 
 async function listOrgUsers(orgId: string) {
-  const users = await readCollection<UserProfile>("users");
+  const users = await readOrgCampaignCollection<UserProfile>("users", orgId);
   return users.filter((user) => orgIdOf(user) === orgId);
 }
 
 async function getOrganizations() {
-  return readCollection<Organization>("organizations");
+  return readCampaignCollection<Organization>("organizations");
 }
 
 async function getCampaigns() {
-  return readCollection<Campaign>("campaigns");
+  return readCampaignCollection<Campaign>("campaigns");
 }
 
 async function getCampaignVersions() {
-  return readCollection<CampaignVersion>("campaign_versions");
+  return readCampaignCollection<CampaignVersion>("campaign_versions");
 }
 
 async function getCampaignLinks() {
-  return readCollection<CampaignLink>("campaign_links");
+  return readCampaignCollection<CampaignLink>("campaign_links");
 }
 
 async function getCampaignAssignments() {
-  return readCollection<CampaignAssignment>("campaign_assignments");
+  return readCampaignCollection<CampaignAssignment>("campaign_assignments");
 }
 
 async function getCampaignResponses() {
-  return readCollection<CampaignResponse>("campaign_responses");
+  return readCampaignCollection<CampaignResponse>("campaign_responses");
 }
 
 function sanitizeStorageName(value: string) {
@@ -1112,33 +1138,33 @@ export async function getCampaignAdminWorkspace(session: AuthSession) {
   const [organizationId, campaigns, versions, links, assignments, responses, users] =
     await Promise.all([
       Promise.resolve(session.orgId),
-      getCampaigns(),
-      getCampaignVersions(),
-      getCampaignLinks(),
-      getCampaignAssignments(),
-      getCampaignResponses(),
+      readOrgCampaignCollection<Campaign>("campaigns", session.orgId),
+      readOrgCampaignCollection<CampaignVersion>("campaign_versions", session.orgId),
+      readOrgCampaignCollection<CampaignLink>("campaign_links", session.orgId),
+      readOrgCampaignCollection<CampaignAssignment>("campaign_assignments", session.orgId),
+      readOrgCampaignCollection<CampaignResponse>("campaign_responses", session.orgId),
       listOrgUsers(session.orgId)
     ]);
 
   return {
     organization:
       (await getOrganizations()).find((entry) => entry.id === organizationId) ?? null,
-    campaigns: campaigns.filter((entry) => entry.orgId === session.orgId),
-    versions: versions.filter((entry) => entry.orgId === session.orgId),
-    links: links.filter((entry) => entry.orgId === session.orgId),
-    assignments: assignments.filter((entry) => entry.orgId === session.orgId),
-    responses: responses.filter((entry) => entry.orgId === session.orgId),
+    campaigns,
+    versions,
+    links,
+    assignments,
+    responses,
     users
   };
 }
 
 export async function getEmployeeCampaignWorkspace(session: AuthSession) {
   const [assignments, campaigns, versions, links, responses] = await Promise.all([
-    getCampaignAssignments(),
-    getCampaigns(),
-    getCampaignVersions(),
-    getCampaignLinks(),
-    getCampaignResponses()
+    readOrgCampaignCollection<CampaignAssignment>("campaign_assignments", session.orgId),
+    readOrgCampaignCollection<Campaign>("campaigns", session.orgId),
+    readOrgCampaignCollection<CampaignVersion>("campaign_versions", session.orgId),
+    readOrgCampaignCollection<CampaignLink>("campaign_links", session.orgId),
+    readOrgCampaignCollection<CampaignResponse>("campaign_responses", session.orgId)
   ]);
 
   const employeeAssignments = assignments.filter(
@@ -1154,12 +1180,16 @@ export async function getEmployeeCampaignWorkspace(session: AuthSession) {
   }));
 }
 
-export async function getCampaignAnalytics(session: AuthSession) {
-  assertAdmin(session);
-  const { campaigns, versions, links, assignments, responses } = await getCampaignAdminWorkspace(
-    session
-  );
-
+function buildCampaignAnalytics({
+  campaigns,
+  versions,
+  links,
+  assignments,
+  responses
+}: Pick<
+  Awaited<ReturnType<typeof getCampaignAdminWorkspace>>,
+  "campaigns" | "versions" | "links" | "assignments" | "responses"
+>) {
   const summary = {
     totalResponses: responses.length,
     employeeResponses: responses.filter((entry) => entry.channel === "employee").length,
@@ -1266,4 +1296,18 @@ export async function getCampaignAnalytics(session: AuthSession) {
     geoPoints,
     recentResponses
   } satisfies CampaignAnalyticsPayload;
+}
+
+export async function getCampaignAnalytics(session: AuthSession) {
+  assertAdmin(session);
+  const workspace = await getCampaignAdminWorkspace(session);
+  return buildCampaignAnalytics(workspace);
+}
+
+export async function getAdminCampaignDashboard(session: AuthSession) {
+  const workspace = await getCampaignAdminWorkspace(session);
+  return {
+    workspace,
+    analytics: buildCampaignAnalytics(workspace)
+  };
 }
