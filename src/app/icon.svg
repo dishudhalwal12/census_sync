@@ -1,8 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#0f766e" />
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="icon-bg" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#201633" />
+      <stop offset="1" stop-color="#6B4AC4" />
+    </linearGradient>
+    <radialGradient id="icon-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(38 28) rotate(52.0843) scale(52.9327)">
+      <stop stop-color="#FFFFFF" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#icon-bg)" />
+  <rect width="128" height="128" rx="30" fill="url(#icon-glow)" />
   <path
-    d="M31 84V38h18c21 0 33 8 33 22 0 15-13 24-34 24h-6v20H31Zm11-30h6c14 0 22-5 22-14 0-8-7-12-21-12h-7v26Z"
-    fill="#f8fafc"
+    d="M84 39.5C79.125 35.625 72.9219 33.5 66.5 33.5C50.7599 33.5 38 46.2599 38 62C38 77.7401 50.7599 90.5 66.5 90.5C72.9219 90.5 79.125 88.375 84 84.5"
+    stroke="#F8F5FF"
+    stroke-width="15"
+    stroke-linecap="round"
+    stroke-linejoin="round"
   />
-  <circle cx="94" cy="94" r="11" fill="#facc15" />
+  <circle cx="89.5" cy="43.5" r="9.5" fill="#FFE491" />
+  <circle cx="83" cy="90" r="8" fill="#FFB083" />
+  <path
+    d="M61 54H78"
+    stroke="#C79AF8"
+    stroke-width="7"
+    stroke-linecap="round"
+  />
+  <path
+    d="M58 68H79"
+    stroke="#C79AF8"
+    stroke-width="7"
+    stroke-linecap="round"
+  />
+  <path
+    d="M61 82H74"
+    stroke="#C79AF8"
+    stroke-width="7"
+    stroke-linecap="round"
+  />
 </svg>
